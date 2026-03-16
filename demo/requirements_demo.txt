@@ -1,0 +1,33 @@
+# demo requirements
+# Install with: pip install -r demo/requirements_demo.txt
+
+# ── Core Deep Learning ───────────────────────────────────────
+torch>=2.1.0
+torchvision>=0.16.0
+
+# ── YOLOv11 ──────────────────────────────────────────────────
+ultralytics>=8.1.0
+
+# ── Computer Vision ──────────────────────────────────────────
+opencv-python>=4.9.0.80
+Pillow>=10.2.0
+numpy>=1.26.0
+
+# ── Gemini API (replaces BLIP in demo) ───────────────────────
+google-generativeai>=0.7.0
+
+# ── OCR ──────────────────────────────────────────────────────
+easyocr>=1.7.1
+
+# ── Text-to-Speech ───────────────────────────────────────────
+pyttsx3>=2.90
+edge-tts>=6.1.9
+pygame>=2.5.0          # required by edge-tts for audio playback
+
+# ── Telugu Translation ────────────────────────────────────────
+deep-translator>=1.11.4  # English → Telugu (Google Translate, free)
+
+# ── Utilities ────────────────────────────────────────────────
+tqdm>=4.66.0
+requests>=2.31.0
+colorlog>=6.8.0

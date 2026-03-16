@@ -1,0 +1,68 @@
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual Environments ─────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Data / Datasets (too large for git) ──────────────────────
+data/vizwiz/
+data/coco/
+data/raw/
+*.zip
+*.tar
+*.tar.gz
+*.tar.bz2
+
+# ── Model Weights & Checkpoints ──────────────────────────────
+checkpoints/
+models/
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+# Allow base YOLO model (needed for training on other systems)
+!yolo11n.pt
+
+# ── Logs & Outputs ───────────────────────────────────────────
+logs/
+runs/
+*.log
+*.csv
+tensorboard_logs/
+
+# ── IDE & OS ─────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Hugging Face Cache ───────────────────────────────────────
+.cache/
+~/.cache/huggingface/
+
+# ── Test Artifacts ───────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── OpenVINO Export ──────────────────────────────────────────
+exported_models/
+*.xml
+*.mapping
