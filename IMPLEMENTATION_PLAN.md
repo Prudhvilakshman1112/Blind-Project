@@ -1,188 +1,71 @@
-# 🦯 Blind-Project: Telugu Campus Navigation Assistant
-## Implementation Plan
+# Implementation Plan Archive — March 2025 Overhaul
 
-> **Objective**: An AI-powered assistive navigation application for blind and visually impaired students inside university/college premises. The app detects surrounding objects, understands the scene, reads signs, and speaks everything in **Telugu** via a neural voice.
-
----
-
-## System Architecture
-
-```
-Camera Feed (OpenCV)
-        │
-        ▼
-  Vision Module ──────────────────────────────────────────────┐
-  (YOLOv11s — trained on COCO + Indoor Campus datasets)       │
-  (Danger Zone Alert — center 35% × 50% of frame)            │
-  (Spatial Grid: 9-zone clock positions)                      │
-        │                                                     │
-        ▼                                                     ▼
-  Caption Module                                       OCR Module
-  (BLIP — fine-tuned on Telugu IndicCaption 60%)      (EasyOCR — en + te)
-  (Spatial Reasoning NLP layer)                               │
-        │                                                     │
-        └──────────────────┬───────────────────────────────────┘
-                           ▼
-                    Audio Module
-              (Telugu Translation — deep-translator)
-              (Microsoft Neural TTS — te-IN-ShrutiNeural)
-              (Priority Queue: Danger > Description > OCR)
-                           │
-                           ▼
-                    Speaker / Earphones
-                    🔊 "హెచ్చరిక! మీకు ముందు ఒక కుర్చీ ఉంది"
-```
+This document records all changes made during the comprehensive March 2025 overhaul of Blind-Project.
 
 ---
 
-## Dataset Strategy
+## Why the Overhaul Was Needed
 
-### Phase 1 — Object Detection (YOLO)
+Three critical problems were identified:
 
-| Dataset                        | Source          | Classes                             | Size      | Auto? |
-| ------------------------------ | --------------- | ----------------------------------- | --------- | ----- |
-| MS-COCO 2017                   | Auto-download   | 80 general objects                  | ~20 GB    | ✅    |
-| Indoor Objects Detection       | Kaggle (manual) | door, chair, table, window, pole    | ~1 GB     | ❌    |
-| Door + Stairs + Chairs         | Roboflow (manual)| door, stairs, chair, toilet         | ~500 MB   | ❌    |
-| SmartCane Indoor Objects       | Roboflow (manual)| chair, table, door                  | ~300 MB   | ❌    |
-
-👉 Manual download guide: `data/MANUAL_DOWNLOADS.md`
-
-### Phase 2 — Scene Captioning (BLIP — Telugu)
-
-| Dataset                  | Source         | Language   | Training Weight | Auto? |
-| ------------------------ | -------------- | ---------- | --------------- | ----- |
-| AI4Bharat IndicCaption   | HuggingFace    | **Telugu** | **60%**         | ✅    |
-| VizWiz-Captions          | Auto-download  | English    | 25%             | ✅    |
-| MS-COCO Captions         | Auto-download  | English    | 15%             | ✅    |
+1. **Unavailable Datasets** — `ai4bharat/IndicCOCO` was confirmed unavailable on HuggingFace. The fallback datasets (MS-COCO 18 GB, VizWiz) were too large and contained irrelevant objects.
+2. **Code Bugs** — `DATA_DIR_REF` variable in `train_detector.py` was used before it was defined (silent crash). Deprecated `torch.cuda.amp.autocast` in `train_captioner.py`.
+3. **Suboptimal Logic** — All 80 COCO classes were trained (elephants, pizzas, etc.). OCR only fired on manual 'R' press. Danger zone covered too much of the frame.
 
 ---
 
-## Module Descriptions
+## Changes Made
 
-### `src/vision_module.py`
-- **CameraStream**: Threaded OpenCV `VideoCapture` with frame buffer
-- **ObjectDetector**: YOLOv11s inference → bounding boxes + class labels + confidence
-- **SpatialAnalyzer**:
-  - Divides frame into 3×3 grid → clock-position labels (9, 12, 3 o'clock etc.)
-  - Bounding box area % → distance estimate (`very close` / `nearby` / `in the distance`)
-  - Center 35% × 50% of frame = **danger zone** → triggers priority interrupt alert
+### Datasets Replaced
 
-### `src/caption_module.py`
-- **SceneCaptioner**: Loads fine-tuned BLIP (Telugu-trained)
-- **SpatialReasoningNLP**: Enriches BLIP output with YOLO detections
-  - e.g. `"You are in a corridor. A chair is very close at 9 o'clock."`
-  - Scene description fires every **4 seconds** (rate-limited)
+| Old | New |
+|-----|-----|
+| `ai4bharat/IndicCOCO` (unavailable) | `Hardik15/telugu-image-captions` (HuggingFace, ~25K pairs, Aug 2024) |
+| MS-COCO 2017 (18 GB, 80 classes) | Roboflow campus-specific datasets |
+| VizWiz-Captions (noisy, English) | Removed entirely |
 
-### `src/audio_module.py`
-- **TeluguTranslator**: Translates English text → Telugu via `deep-translator`
-- **EdgeTTSBackend**: Microsoft neural voice `te-IN-ShrutiNeural`
-- **PriorityTTSQueue**: Two-tier queue
-  - `HIGH` priority → danger alerts (interrupt immediately)
-  - `LOW` priority → scene descriptions + OCR
+### Bugs Fixed
 
-### `src/ocr_module.py`
-- **OCRReader**: EasyOCR — reads English + Telugu text from camera
-- Press `R` in developer window to toggle Reading Mode
+| File | Bug | Fix |
+|------|-----|-----|
+| `training/train_detector.py` | `DATA_DIR_REF` used before assignment | Removed; use `DATA_DIR` directly from config import |
+| `training/train_captioner.py` | `from torch.cuda.amp import GradScaler, autocast` (deprecated) | Replaced with `torch.amp.GradScaler(device=...)` and `torch.amp.autocast(device_type=...)` |
+| `training/evaluate.py` | Used `VIZWIZ_DIR` (removed from config) | Updated to use `CAMPUS_CAPTION_DIR` |
 
-### `main.py`
-- `ThreadPoolExecutor` — parallel capture + inference + TTS
-- Developer Window: bounding boxes, clock positions, danger zone, FPS
-- Keyboard: `Q` quit · `R` reading mode · `P` pause TTS
+### Logic Improvements
 
----
+| Feature | Before | After |
+|---------|--------|-------|
+| YOLO classes | 80 COCO classes | 18 campus-specific classes |
+| Danger zone | 35% × 50% of frame | 28% × 40% (tighter, fewer false positives) |
+| OCR trigger | Manual 'R' key only | Auto-triggers on sign/board/notice YOLO detection |
+| High-priority objects | None | `stairs`, `step`, `ramp`, `openedDoor`, `pole` → immediate `tts.alert()` |
+| Detection sort order | Danger zone first, then confidence | High-priority first, then danger zone, then confidence |
+| Bbox colouring | Green / Red | Green / Orange (high-priority) / Red (danger zone) |
 
-## File Structure
+### Files Changed
 
-```
-Blind-Project/
-├── config.py                       ← All settings (TELUGU_MODE, model paths, etc.)
-├── main.py                         ← Production entry point
-│
-├── src/                            ← Core application modules
-│   ├── audio_module.py             ← Telugu TTS + translator
-│   ├── caption_module.py           ← BLIP scene captioning
-│   ├── vision_module.py            ← YOLO detection + spatial reasoning
-│   └── ocr_module.py               ← Sign/text reading
-│
-├── data/
-│   ├── download_datasets.py        ← Auto-download: VizWiz, COCO, IndicCaption
-│   ├── dataset_loader.py           ← IndicCaptionDataset + CombinedCaptionDataset
-│   ├── MANUAL_DOWNLOADS.md         ← Kaggle/Roboflow step-by-step guide
-│   ├── vizwiz/                     ← VizWiz blind-user captions
-│   ├── coco/                       ← COCO images + captions
-│   ├── indic_caption/              ← AI4Bharat Telugu captions
-│   └── indoor_campus/              ← Campus datasets (manual)
-│
-├── training/
-│   ├── train_detector.py           ← YOLO: COCO + campus combined training
-│   ├── train_captioner.py          ← BLIP: Telugu-primary fine-tuning
-│   ├── evaluate.py                 ← BLEU/METEOR scoring
-│   └── export_models.py            ← ONNX + OpenVINO export
-│
-├── demo/                           ← Standalone demo (no training needed)
-│   └── main_demo.py                ← Gemini Flash + pre-trained YOLO + Telugu TTS
-│
-└── checkpoints/                    ← Saved weights after training
-    ├── yolo11_custom.pt
-    └── blip_finetuned/best/
-```
+| File | Change Type |
+|------|-------------|
+| `config.py` | Rewrite — new dataset paths, campus classes, danger zone, priority objects |
+| `data/download_datasets.py` | Rewrite — Telugu HF dataset, removed VizWiz/COCO/IndicCOCO |
+| `data/dataset_loader.py` | Rewrite — `TeluguCaptionDataset` + `CampusDetectionVerifier` |
+| `data/MANUAL_DOWNLOADS.md` | Rewrite — exact Roboflow URLs |
+| `training/train_detector.py` | Rewrite — bug fix, campus-only 18 classes |
+| `training/train_captioner.py` | Rewrite — bug fix, Telugu-only dataset |
+| `training/evaluate.py` | Rewrite — Telugu eval, fixed deprecated imports |
+| `src/vision_module.py` | Update — high-priority flag, orange bbox, updated docstrings |
+| `src/caption_module.py` | Update — expanded PRIORITY_OBJECTS, high-priority alerts |
+| `src/audio_module.py` | Update — latency note, post-fine-tune note |
+| `src/ocr_module.py` | Update — OCR auto-trigger from YOLO detections |
+| `main.py` | Rewrite — high-priority alert path, OCR auto-trigger integration |
+| `requirements.txt` | Update — added huggingface-hub, deep-translator, pygame; removed pycocotools |
+| `README.md` | Rewrite — new pipeline documentation |
+| `TRAINING_GUIDE.md` | Rewrite — 6-phase training guide |
+| `NEXT_STEPS_DATASET_UPGRADE.md` | Rewrite — post-training steps |
 
----
-
-## Hardware Requirements
-
-| Component   | Minimum              | Recommended         |
-| ----------- | -------------------- | ------------------- |
-| GPU         | NVIDIA 4 GB VRAM     | NVIDIA 6 GB+ VRAM   |
-| RAM         | 16 GB                | 32 GB               |
-| Disk Space  | 60 GB free           | 100 GB free         |
-| Python      | 3.10+                | 3.10+               |
-| OS          | Windows 10/11        | Windows 10/11       |
-
----
-
-## Time Estimates (NVIDIA RTX 3050)
-
-| Phase                              | Estimated Time  |
-| ---------------------------------- | --------------- |
-| Dataset download (all, ~25 GB)     | 2 – 4 hours     |
-| Library installation               | ~30 minutes     |
-| BLIP fine-tuning (8 epochs)        | 4 – 7 hours     |
-| YOLOv11s fine-tuning (80 epochs)   | 2 – 4 hours     |
-| Evaluation + ONNX export           | ~1 hour         |
-| **Total one-time setup**           | **~10 – 16 hours** |
-
----
-
-## Success Metrics
-
-| Metric                        | Target       |
-| ----------------------------- | ------------ |
-| Real-time FPS                 | ≥ 25 FPS     |
-| Glass-to-ear latency          | < 1 second   |
-| BLEU-4 (VizWiz val set)       | ≥ 0.25       |
-| METEOR (VizWiz val set)       | ≥ 0.28       |
-| Danger alert response time    | < 200 ms     |
-| Telugu TTS startup            | < 2 seconds  |
-
----
-
-## Technology Stack
-
-| Category          | Technology                                        |
-| ----------------- | ------------------------------------------------- |
-| Language          | Python 3.10+                                      |
-| Computer Vision   | OpenCV, Ultralytics YOLOv11s                      |
-| Image Captioning  | Salesforce BLIP (fine-tuned on Telugu)            |
-| Deep Learning     | PyTorch + HuggingFace Transformers                |
-| OCR               | EasyOCR (English + Telugu)                        |
-| Translation       | deep-translator (Google Translate API)            |
-| Speech (TTS)      | Microsoft edge-tts — `te-IN-ShrutiNeural`         |
-| Optimization      | ONNX + OpenVINO (for edge deployment)             |
-| Concurrency       | `concurrent.futures.ThreadPoolExecutor`           |
-| Datasets          | IndicCaption (te) + VizWiz + COCO + Campus sets   |
-
----
-
-*Last updated: 2026-03-12*
+### Files NOT Changed (Intentionally)
+- `demo/` — All demo files untouched (separate system)
+- `tests/` — All unit tests pass without changes
+- `data/augmentations.py` — Compatible with new dataset loader
+- `training/export_models.py` — Still valid for ONNX export

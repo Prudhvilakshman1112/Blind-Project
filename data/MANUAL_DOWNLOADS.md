@@ -1,98 +1,104 @@
-# Manual Dataset Downloads — Indoor Campus Navigation
+# Manual Dataset Downloads — Campus Navigation (Roboflow / Kaggle)
 
-These datasets **cannot be auto-downloaded** (require account login).
+These datasets **cannot be auto-downloaded** (require free account login).
 Follow the steps below, then place each dataset in the correct folder.
+
+> **Note:** The project no longer uses full MS-COCO, VizWiz, or AI4Bharat IndicCOCO.
+> All YOLO training now uses campus-specific Roboflow datasets only (fast + accurate).
+> Telugu captions are auto-downloaded: `python data/download_datasets.py --dataset telugu`
 
 ---
 
-## Dataset 1 — Indoor Objects Detection (Kaggle)
+## Dataset 1 — SCIN Indoor Navigation System (Roboflow)
 
-**What it is:** YOLO-format dataset for blind/assistive indoor navigation.
-**Classes:** door, openedDoor, cabinetDoor, window, chair, table, cabinet, sofa, pole
+**What it is:** 544 annotated indoor navigation images  
+**Classes:** `door`, `stairs`  
+**Direct URL:** https://universe.roboflow.com/scin/indoor-navigation-system
+
+### Steps:
+1. Open: https://universe.roboflow.com/scin/indoor-navigation-system
+2. Click **Download Dataset**
+3. Select format: **YOLOv11** → click **Download** (zip)
+4. Extract the zip
+5. Place contents inside:
+   ```
+   d:\Blind-Project\data\indoor_campus\scin_indoor\
+   ```
+   Expected structure:
+   ```
+   scin_indoor/
+   ├── train/
+   │   ├── images/
+   │   └── labels/
+   └── valid/
+       ├── images/
+       └── labels/
+   ```
+
+---
+
+## Dataset 2 — Akhash Indoor Navigation (Roboflow)
+
+**What it is:** 1,115 annotated indoor navigation images  
+**Classes:** `door`, `person`, `elevator`, `stair sign`  
+**Direct URL:** https://universe.roboflow.com/akhash/indoor-navigation
+
+### Steps:
+1. Open: https://universe.roboflow.com/akhash/indoor-navigation
+2. Click **Download Dataset**
+3. Select format: **YOLOv11** → click **Download** (zip)
+4. Extract and place contents inside:
+   ```
+   d:\Blind-Project\data\indoor_campus\akhash_indoor\
+   ```
+
+---
+
+## Dataset 3 — Indoor Navigation For The Blind (Roboflow)
+
+**What it is:** Indoor assistive navigation dataset  
+**Classes:** `door`, `stairs`, `pole`, `chair`, `table`  
+**Search:** https://universe.roboflow.com — search **"IndoorNavigationForTheBlinds"**
+
+### Steps:
+1. Go to https://universe.roboflow.com
+2. Search: **IndoorNavigationForTheBlinds**
+3. Open the dataset → click **Download Dataset**
+4. Select format: **YOLOv11** → click Download (zip)
+5. Extract and place contents inside:
+   ```
+   d:\Blind-Project\data\indoor_campus\blind_indoor\
+   ```
+
+---
+
+## Dataset 4 — Stairs Detection Dataset (Kaggle)
+
+**What it is:** 1,000 JPEG stair images with YOLO-format bounding boxes  
+**Classes:** `stairs`  
+**Search:** https://www.kaggle.com — search **"Stairs Detection YOLO Samuel Ayman"**
 
 ### Steps:
 1. Go to https://www.kaggle.com
 2. Sign in (or create a free account)
-3. Search: **"Indoor Objects Detection blind"**
-4. Click **Download** (zip file)
-5. Extract the zip
-6. Place contents inside:
-   ```
-   d:\Blind-Project\data\indoor_campus\indoor_objects\
-   ```
-   Expected structure:
-   ```
-   indoor_objects/
-   ├── images/
-   │   ├── train/
-   │   └── val/
-   └── labels/
-       ├── train/
-       └── val/
-   ```
-
----
-
-## Dataset 2 — Door + Stairs + Chairs + Toilet (Roboflow)
-
-**What it is:** YOLO object detection dataset for building navigation.
-**Classes:** door, stairs, chair, toilet
-
-### Steps:
-1. Go to https://universe.roboflow.com
-2. Search: **"door stairs chairs detection"**
-3. Open the dataset → click **Download Dataset**
-4. Select format: **YOLOv11** → click Download (zip)
+3. Search: **"Stairs Detection YOLO Samuel Ayman"**
+4. Click **Download** (zip)
 5. Extract and place contents inside:
    ```
-   d:\Blind-Project\data\indoor_campus\door_stairs\
-   ```
-
----
-
-## Dataset 3 — SmartCane Indoor Objects (Roboflow)
-
-**What it is:** YOLO dataset built by a smartcane assistive device team.
-**Classes:** chair, table, door
-
-### Steps:
-1. Go to https://universe.roboflow.com
-2. Search: **"smartcane indoor objects"**
-3. Open the dataset → click **Download Dataset**
-4. Select format: **YOLOv11** → click Download (zip)
-5. Extract and place contents inside:
-   ```
-   d:\Blind-Project\data\indoor_campus\smartcane\
-   ```
-
----
-
-## Dataset 4 — Stairs and Doors (Kaggle)
-
-**What it is:** Annotated images of stairs, doors, windows.
-**Classes:** door, window, stairs
-
-### Steps:
-1. Go to https://www.kaggle.com
-2. Search: **"Door Windows Stairs Dataset Annotated"**
-3. Download and extract
-4. Convert to YOLO format if needed (Roboflow free converter helps)
-5. Place in:
-   ```
-   d:\Blind-Project\data\indoor_campus\stairs_doors\
+   d:\Blind-Project\data\indoor_campus\stairs_kaggle\
    ```
 
 ---
 
 ## After Downloading All Datasets
 
-Run the combined YOLO training:
+Run the YOLO campus training:
 ```bash
-python training/train_detector.py --dataset combined --model yolo11s.pt
+python training/train_detector.py --dataset campus
 ```
 
-The training script will auto-detect all sub-folders inside `data/indoor_campus/`
-and merge them with COCO into one training run.
+The training script auto-discovers all sub-folders inside `data/indoor_campus/`
+and trains on the combined campus-specific detection classes.
 
 ---
 
@@ -100,12 +106,20 @@ and merge them with COCO into one training run.
 
 ```
 data/
-├── vizwiz/              ← Auto-downloaded (python data/download_datasets.py --dataset vizwiz)
-├── coco/                ← Auto-downloaded (python data/download_datasets.py --dataset coco)
-├── indic_caption/       ← Auto-downloaded (python data/download_datasets.py --dataset indic)
+├── telugu_captions/     ← Auto-downloaded (python data/download_datasets.py --dataset telugu)
+│   ├── train.json
+│   ├── val.json
+│   └── images/
 └── indoor_campus/       ← MANUAL DOWNLOAD (this guide)
-    ├── indoor_objects/  ← Kaggle
-    ├── door_stairs/     ← Roboflow
-    ├── smartcane/       ← Roboflow
-    └── stairs_doors/    ← Kaggle
+    ├── scin_indoor/     ← Roboflow SCIN  (door, stairs)
+    ├── akhash_indoor/   ← Roboflow Akhash (door, person, elevator, stair sign)
+    ├── blind_indoor/    ← Roboflow Blind (door, stairs, pole, chair, table)
+    └── stairs_kaggle/   ← Kaggle stairs (stairs)
+```
+
+## Verify Downloads
+
+Run at any time to see what is ready:
+```bash
+python data/download_datasets.py --dataset verify
 ```

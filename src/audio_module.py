@@ -4,16 +4,22 @@ src/audio_module.py
 Priority-based Text-to-Speech engine running on a dedicated thread.
 
 LANGUAGE: Telugu (te-IN-ShrutiNeural via Microsoft edge-tts)
-  All text is automatically translated English → Telugu before speaking,
-  controlled by TELUGU_MODE in config.py.
+  Two scenarios:
+    1. Pre-training (BLIP_USE_FINETUNED=False):
+         English text → deep-translator → Telugu → edge-tts
+    2. Post-training (BLIP_USE_FINETUNED=True):
+         BLIP generates Telugu directly → edge-tts (no translation needed)
 
 Two priority levels:
-  TTS_PRIORITY_HIGH (0) — Danger alerts. Interrupts current speech immediately.
+  TTS_PRIORITY_HIGH (0) — Danger alerts (stairs, doors, poles).
+                          Clears queue and interrupts current speech immediately.
   TTS_PRIORITY_LOW  (1) — Scene descriptions. Plays in order.
 
 Two backends:
-  "edge-tts"  — Microsoft neural Telugu voice. Requires internet.
-  "pyttsx3"   — Offline fallback (English only, no Telugu neural voice).
+  "edge-tts"  — Microsoft Neural Telugu voice (te-IN-ShrutiNeural).
+                REQUIRES internet connection. Latency: 800–1500ms per utterance.
+  "pyttsx3"   — Offline fallback. English only (no Telugu neural voice).
+                Set TTS_ENGINE = "pyttsx3" in config.py for fully offline use.
 """
 
 import queue
@@ -43,6 +49,9 @@ class TeluguTranslator:
     """
     Translates English text to Telugu using deep-translator (GoogleTranslator).
     Falls back to original English text on any error.
+
+    Note: After BLIP fine-tuning on Telugu captions, scene descriptions will
+    already be in Telugu — only danger alerts (built in English) need translation.
 
     Install: pip install deep-translator
     """

@@ -1,20 +1,29 @@
 """
 training/train_captioner.py
 ────────────────────────────
-Fine-tunes Salesforce BLIP (blip-image-captioning-base) on the combined
-VizWiz + MS-COCO dataset.  All computation is LOCAL — no API calls.
+Fine-tunes Salesforce BLIP (blip-image-captioning-base) on the Telugu
+image-caption dataset from HuggingFace (Hardik15/telugu-image-captions).
+All computation is LOCAL — no API calls.
 
-Key techniques used:
+WHAT CHANGED (2025 overhaul):
+  - Removed VizWiz and COCO caption training (too large, English-only)
+  - Now trains solely on Telugu captions → model outputs native Telugu
+  - Fixed deprecated torch.cuda.amp import (now uses torch.amp)
+
+Key techniques:
   - Gradient checkpointing  → fits 4 GB VRAM (RTX 3050)
   - Mixed precision (FP16)  → faster, lower VRAM
-  - Gradient accumulation   → effective large batch size without OOM
+  - Gradient accumulation   → effective large batch without OOM
   - Cosine LR schedule with warm-up
   - Best-checkpoint saving on val loss
 
 Usage:
     python training/train_captioner.py
-    python training/train_captioner.py --resume checkpoints/blip_finetuned/checkpoint_epoch3
+    python training/train_captioner.py --resume checkpoints/blip_telugu/checkpoint_epoch3
     python training/train_captioner.py --epochs 5 --batch-size 2
+
+Prerequisites:
+    python data/download_datasets.py --dataset telugu
 """
 
 import sys
@@ -24,7 +33,6 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from transformers import BlipProcessor, BlipForConditionalGeneration
@@ -49,14 +57,16 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
+# ── Fix: use torch.amp (non-deprecated) instead of torch.cuda.amp ────────────
+# torch.cuda.amp.GradScaler / autocast are deprecated in PyTorch >= 2.1
+_scaler_device = "cuda" if torch.cuda.is_available() else "cpu"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Training Loop
 # ─────────────────────────────────────────────────────────────────────────────
 
-def train_one_epoch(
-    model, loader, optimizer, scheduler, scaler, epoch, accum_steps
-):
+def train_one_epoch(model, loader, optimizer, scheduler, scaler, epoch, accum_steps):
     model.train()
     total_loss = 0.0
     optimizer.zero_grad()
@@ -67,7 +77,7 @@ def train_one_epoch(
         attention_mask  = batch["attention_mask"].to(DEVICE)
         pixel_values    = batch["pixel_values"].to(DEVICE)
 
-        with autocast(enabled=USE_FP16):
+        with torch.amp.autocast(device_type=_scaler_device, enabled=USE_FP16):
             outputs = model(
                 pixel_values=pixel_values,
                 input_ids=input_ids,
@@ -103,7 +113,7 @@ def validate(model, loader):
         attention_mask = batch["attention_mask"].to(DEVICE)
         pixel_values   = batch["pixel_values"].to(DEVICE)
 
-        with autocast(enabled=USE_FP16):
+        with torch.amp.autocast(device_type=_scaler_device, enabled=USE_FP16):
             outputs = model(
                 pixel_values=pixel_values,
                 input_ids=input_ids,
@@ -122,6 +132,7 @@ def validate(model, loader):
 
 def main(args):
     log.info(f"Using device: {DEVICE}  |  FP16: {USE_FP16}")
+    log.info("Training BLIP on Telugu captions (Hardik15/telugu-image-captions)")
     save_dir = Path(BLIP_FINETUNED_PATH)
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -142,11 +153,14 @@ def main(args):
             log.info(f"Resuming from checkpoint: {ckpt_path}")
             model = BlipForConditionalGeneration.from_pretrained(str(ckpt_path))
             model.to(DEVICE)
-            start_epoch = int(ckpt_path.name.split("epoch")[-1]) + 1
+            try:
+                start_epoch = int(ckpt_path.name.split("epoch")[-1]) + 1
+            except ValueError:
+                start_epoch = 1
         else:
             log.warning(f"Checkpoint not found: {ckpt_path}  — starting fresh")
 
-    # DataLoaders
+    # DataLoaders (Telugu captions only)
     train_loader, val_loader = get_dataloaders(
         processor=processor,
         train_batch_size=args.batch_size,
@@ -162,7 +176,9 @@ def main(args):
         eps=1e-8,
     )
     scheduler = CosineAnnealingLR(optimizer, T_max=num_training_steps, eta_min=1e-6)
-    scaler    = GradScaler(enabled=USE_FP16)
+
+    # Use non-deprecated GradScaler
+    scaler = torch.amp.GradScaler(device=_scaler_device, enabled=USE_FP16)
 
     log.info(f"Training steps: {num_training_steps}  |  Epochs: {args.epochs}")
 
@@ -196,16 +212,21 @@ def main(args):
             processor.save_pretrained(str(best_dir))
             log.info(f"  ★ New best model saved (val_loss={best_val_loss:.4f})")
 
-    log.info(f"\n✓ Training complete. Best val loss: {best_val_loss:.4f}")
+    log.info(f"\n✓ Telugu BLIP training complete. Best val loss: {best_val_loss:.4f}")
     log.info(f"  Best model → {save_dir / 'best'}")
+    log.info(f"  Next step: set BLIP_USE_FINETUNED = True in config.py")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fine-tune BLIP on VizWiz + COCO")
+    parser = argparse.ArgumentParser(
+        description="Fine-tune BLIP on Telugu Image Captions for Campus Navigation"
+    )
     parser.add_argument("--epochs",     type=int,   default=BLIP_TRAIN_EPOCHS)
     parser.add_argument("--batch-size", type=int,   default=BLIP_TRAIN_BATCH_SIZE)
     parser.add_argument("--lr",         type=float, default=BLIP_LEARNING_RATE)
-    parser.add_argument("--resume",     type=str,   default=None,
-                        help="Path to checkpoint directory to resume from")
+    parser.add_argument(
+        "--resume", type=str, default=None,
+        help="Path to checkpoint directory to resume from"
+    )
     args = parser.parse_args()
     main(args)

@@ -1,233 +1,185 @@
-# 🧪 TRAINING_GUIDE.md — Blind-Project Complete Training Guide
+# Training Guide — Blind-Project Campus Navigation
 
-Full walkthrough for training the Telugu campus navigation system from scratch.
-All computation is LOCAL — no cloud services required.
+> **Updated March 2025** — Complete overhaul. Old COCO / VizWiz / IndicCOCO steps removed.
 
----
-
-## 1. Overall Pipeline
-
-```
-Step 1  →  Install dependencies
-Step 2  →  Auto-download datasets (VizWiz + COCO + IndicCaption Telugu)
-Step 3  →  Manual download: campus datasets (Kaggle + Roboflow)
-Step 4  →  Train YOLOv11s detector  (COCO + campus combined)
-Step 5  →  Train BLIP captioner     (Telugu-primary: 60% Telugu)
-Step 6  →  Evaluate captioner
-Step 7  →  Export models
-Step 8  →  Enable in config.py
-Step 9  →  Run live application
-```
+This guide walks you through the full training pipeline from dataset download to a deployable model.
 
 ---
 
-## 2. Dataset Details
-
-### 2A. Object Detection Datasets (YOLO)
-
-These teach the model to **SEE and locate** objects:
-
-| Dataset | Size | Classes | How to Get |
-|---------|------|---------|------------|
-| MS-COCO 2017 | ~20 GB | 80 general objects | `python data/download_datasets.py --dataset coco` |
-| Indoor Objects | ~1 GB | door, chair, table, window, pole | Kaggle — see MANUAL_DOWNLOADS.md |
-| Door+Stairs+Chairs | ~500 MB | door, stairs, chair, toilet | Roboflow — see MANUAL_DOWNLOADS.md |
-| SmartCane Indoor | ~300 MB | chair, table, door | Roboflow — see MANUAL_DOWNLOADS.md |
-
-👉 **Manual downloads:** [`data/MANUAL_DOWNLOADS.md`](../data/MANUAL_DOWNLOADS.md)
-
-### 2B. Caption Datasets (BLIP — Telugu)
-
-These teach the model to **describe scenes in Telugu**:
-
-| Dataset | Images | Language | Weight | How to Get |
-|---------|--------|----------|--------|------------|
-| **AI4Bharat IndicCaption** | ~40,000 | **Telugu** | **60%** | `python data/download_datasets.py --dataset indic` |
-| VizWiz-Captions | 23,431 | English | 25% | `python data/download_datasets.py --dataset vizwiz` |
-| MS-COCO Captions | 118,000 | English | 15% | `python data/download_datasets.py --dataset coco` |
-
-#### Why Telugu Gets 60% Weight
-The app must output **natively accurate Telugu**. By giving Telugu IndicCaption
-60% of training batches, BLIP learns to generate Telugu text directly without
-needing a translation step — faster, more natural, more accurate.
-
----
-
-## 3. Step-by-Step Training
-
-### Step 1 — Install Dependencies
+## Prerequisites
 
 ```bash
 pip install -r requirements.txt
-pip install datasets huggingface-hub     # For IndicCaption download
-pip install deep-translator edge-tts pygame   # For Telugu TTS
 ```
 
-### Step 2 — Auto-Download Datasets
+Ensure you have:
+- Python 3.10+
+- PyTorch with CUDA (check: `python -c "import torch; print(torch.cuda.is_available())"`)
+- At least 4 GB GPU VRAM (6–8 GB recommended)
+- Internet connection (for HuggingFace download + edge-tts TTS)
+
+---
+
+## Phase 1 — Download Datasets
+
+### Step 1A: Telugu Captions (Auto)
+Downloads `Hardik15/telugu-image-captions` from HuggingFace (~25K image-caption pairs).
 
 ```bash
-# Download all auto-downloadable datasets
-python data/download_datasets.py --dataset all
-
-# Or individually:
-python data/download_datasets.py --dataset indic    # Telugu captions (fastest)
-python data/download_datasets.py --dataset vizwiz   # Blind user photos
-python data/download_datasets.py --dataset coco     # COCO (~20 GB, takes time)
+python data/download_datasets.py --dataset telugu
 ```
 
-### Step 3 — Manual Campus Datasets
+This saves to:
+```
+data/telugu_captions/
+├── train.json    ← ~22,500 Telugu caption pairs
+├── val.json      ← ~2,500 Telugu caption pairs
+└── images/       ← downloaded image files
+```
 
+### Step 1B: Campus Detection Datasets (Manual)
+
+Show full instructions:
 ```bash
-# See instructions:
 python data/download_datasets.py --dataset manual-info
-# OR open: data/MANUAL_DOWNLOADS.md
 ```
 
-Place each dataset in `data/indoor_campus/<subfolder>/`.
+Download these **4 datasets** from Roboflow/Kaggle and put them in the correct folders:
 
-### Step 4 — Train YOLO Detector
+| Dataset | Source | Target Folder |
+|---------|--------|---------------|
+| SCIN Indoor Navigation | [Roboflow](https://universe.roboflow.com/scin/indoor-navigation-system) | `data/indoor_campus/scin_indoor/` |
+| Akhash Indoor Navigation | [Roboflow](https://universe.roboflow.com/akhash/indoor-navigation) | `data/indoor_campus/akhash_indoor/` |
+| Blind Indoor Navigation | Roboflow (search: IndoorNavigationForTheBlinds) | `data/indoor_campus/blind_indoor/` |
+| Stairs Detection | Kaggle (search: Stairs Detection YOLO Samuel Ayman) | `data/indoor_campus/stairs_kaggle/` |
 
+**Always export Roboflow datasets as YOLOv11 format.**
+
+### Step 1C: Verify Everything
 ```bash
-# Recommended: combined COCO + indoor campus (best for college premises)
-python training/train_detector.py --dataset combined --model yolo11s.pt
-
-# COCO only (if campus datasets not yet downloaded)
-python training/train_detector.py --dataset coco --model yolo11s.pt
-
-# Low VRAM (4 GB):
-python training/train_detector.py --dataset combined --model yolo11s.pt --batch-size 8
+python data/download_datasets.py --dataset verify
 ```
 
-| Model | VRAM | Accuracy | Recommended |
-|-------|------|----------|-------------|
-| `yolo11n.pt` | ~2 GB | ⭐⭐⭐ | Demo only |
-| `yolo11s.pt` | ~3 GB | ⭐⭐⭐⭐ | **✅ Final app** |
-| `yolo11m.pt` | ~5 GB | ⭐⭐⭐⭐⭐ | If you have RTX 4060+ |
+---
 
-Output: `checkpoints/yolo11_custom.pt`
+## Phase 2 — Train YOLO Campus Detector
 
-### Step 5 — Train BLIP Captioner (Telugu)
+This fine-tunes YOLO11s on 18 campus-only classes (no irrelevant COCO objects).
 
 ```bash
-# Default (8 epochs, Telugu-primary)
+# Standard (4-6 GB VRAM):
+python training/train_detector.py --dataset campus
+
+# Higher accuracy (8+ GB VRAM):
+python training/train_detector.py --dataset campus --model yolo11m.pt
+
+# Tune epochs if needed:
+python training/train_detector.py --dataset campus --epochs 100
+```
+
+**Training output:**
+- Progress logged to `logs/yolo_training.log` and `logs/yolo_runs/`
+- Best weights automatically saved to `checkpoints/yolo11_campus.pt`
+- Training plots saved in `logs/yolo_runs/yolo11_campus_yolo11s/`
+
+**After training completes:**
+Edit `config.py`:
+```python
+YOLO_USE_CUSTOM = True
+```
+
+Expected results (yolo11s, 80 epochs): **mAP50 ≥ 0.60** on combined campus test set.
+
+---
+
+## Phase 3 — Fine-Tune BLIP on Telugu Captions
+
+This teaches BLIP to generate scene descriptions in **native Telugu**.
+
+```bash
+# Standard (4 GB VRAM):
 python training/train_captioner.py
 
-# Low VRAM:
-python training/train_captioner.py --batch-size 2
-
-# More accuracy:
-python training/train_captioner.py --epochs 12
+# Faster iteration (less VRAM):
+python training/train_captioner.py --batch-size 2 --epochs 5
 
 # Resume from checkpoint:
-python training/train_captioner.py --resume checkpoints/blip_finetuned/checkpoint_epoch4
+python training/train_captioner.py --resume checkpoints/blip_telugu/checkpoint_epoch3
 ```
 
-Memory optimisations (for RTX 3050 / 4 GB):
-- Gradient checkpointing → −40% VRAM
-- Mixed precision (FP16)
-- Gradient accumulation ×4 → effective batch = 16
+**Training output:**
+- Progress logged to `logs/blip_training.log`
+- Epoch checkpoints: `checkpoints/blip_telugu/checkpoint_epochN/`
+- Best model: `checkpoints/blip_telugu/best/`
 
-Output: `checkpoints/blip_finetuned/best/`
+**After training completes:**
+Edit `config.py`:
+```python
+BLIP_USE_FINETUNED = True
+```
 
-### Step 6 — Evaluate
+**Note:** Once BLIP is fine-tuned on Telugu, the audio module can pipe BLIP output directly to edge-tts — no translation step needed. The `deep-translator` step is still used for English danger alerts.
+
+---
+
+## Phase 4 — Evaluate
 
 ```bash
+# Evaluate on Telugu val split (BLEU + METEOR)
 python training/evaluate.py
+
+# Limit evaluation samples for speed
+python training/evaluate.py --max-samples 500
 ```
 
-Target metrics on VizWiz validation set:
+**Target metrics:**
+- BLEU-4 ≥ 0.25
+- METEOR ≥ 0.28
 
-| Metric | Target | Meaning |
-|--------|--------|---------|
-| BLEU-1 | ≥ 0.55 | Word-level match (Telugu scripts) |
-| BLEU-4 | ≥ 0.25 | Sentence quality |
-| METEOR | ≥ 0.28 | Synonym-aware match |
+Results saved to `logs/eval_report.json`.
 
-### Step 7 — Export (Optional — for deployment)
+---
+
+## Phase 5 — Run the Application
+
+```bash
+python main.py
+```
+
+Or with a video file for testing:
+```bash
+python main.py --source path/to/video.mp4
+```
+
+---
+
+## Phase 6 — Export (Optional, for Edge Deployment)
 
 ```bash
 python training/export_models.py
 ```
 
-Exports ONNX and OpenVINO IR formats for CPU/edge deployment.
+Exports BLIP vision encoder to ONNX / OpenVINO for faster inference on CPU.
 
-### Step 8 — Enable Trained Models
+---
 
-Open `config.py` and change:
+## Tips for Low-VRAM GPUs (4 GB)
+
+In `config.py`:
 ```python
-BLIP_USE_FINETUNED = True    # Use fine-tuned Telugu BLIP
-YOLO_USE_CUSTOM    = True    # Use campus-trained YOLO
-```
-
-### Step 9 — Run the Application
-
-```bash
-python main.py
+BLIP_TRAIN_BATCH_SIZE = 2     # Reduce from 4
+BLIP_GRAD_ACCUM_STEPS = 8     # Increase to compensate (effective batch = 16)
+YOLO_TRAIN_BATCH_SIZE = 8     # Reduce from 16
 ```
 
 ---
 
-## 4. BLIP Telugu Training — In-Depth
+## Common Issues
 
-```
-Training data mix:
-  IndicCaption (Telugu)  ████████████  60%   ← Primary language target
-  VizWiz (English)       █████         25%   ← Blind user context
-  COCO (English)         ███           15%   ← Grammar quality
-```
-
-After training, BLIP outputs Telugu sentences **natively** — e.g.:
-> *"మీరు ఒక తరగతి గదిలో ఉన్నారు. మీకు ముందు ఒక కుర్చీ చాలా దగ్గరగా ఉంది."*
-> ("You are in a classroom. A chair is very close ahead of you.")
-
----
-
-## 5. YOLO Campus Training — What It Detects
-
-After combined training:
-
-| Category | Objects |
-|----------|---------|
-| People | person |
-| Furniture | chair, couch, dining table, bed |
-| Doors & Windows | door, openedDoor, cabinetDoor, window |
-| Stairs & Ramps | stairs, ramp |
-| Outdoor | bicycle, car, bus, motorcycle, bench, traffic light |
-| Campus hazards | pole, corridor |
-| General | 80 COCO classes (bag, bottle, cat, dog, etc.) |
-
----
-
-## 6. Common Issues & Fixes
-
-| Problem | Cause | Fix |
-|---------|-------|-----|
-| `CUDA out of memory` | Batch too large | Use `--batch-size 2` |
-| `FileNotFoundError: train_te.json` | IndicCaption not downloaded | `python data/download_datasets.py --dataset indic` |
-| `FileNotFoundError: indoor_campus` | Manual datasets missing | See `data/MANUAL_DOWNLOADS.md` |
-| No Telugu voice | edge-tts not installed | `pip install edge-tts pygame` |
-| Translation fails | No internet | Check internet connection (edge-tts + deep-translator need it) |
-| BLEU < 0.20 | Too few epochs | Add `--epochs 5` more |
-
----
-
-## 7. Quick Reference
-
-```bash
-# Download all auto-downloadable data
-python data/download_datasets.py --dataset all
-
-# Train YOLO (campus navigation)
-python training/train_detector.py --dataset combined --model yolo11s.pt
-
-# Train BLIP (Telugu descriptions)
-python training/train_captioner.py --epochs 8
-
-# Evaluate
-python training/evaluate.py
-
-# Edit config.py: YOLO_USE_CUSTOM=True, BLIP_USE_FINETUNED=True
-
-# Run
-python main.py
-```
+| Error | Fix |
+|-------|-----|
+| CUDA out of memory | Reduce `BLIP_TRAIN_BATCH_SIZE` to 2 in config.py |
+| `Telugu captions not found` | Run `python data/download_datasets.py --dataset telugu` |
+| `No campus datasets found` | Follow `data/MANUAL_DOWNLOADS.md` |
+| edge-tts timeout | Check internet connection; set `TTS_ENGINE = "pyttsx3"` for offline |
+| YOLO model not found | Run `python training/train_detector.py` first or set `YOLO_USE_CUSTOM = False` |

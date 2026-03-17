@@ -1,13 +1,26 @@
 """
 src/vision_module.py
 ─────────────────────
-Handles real-time camera capture, YOLOv11 object detection, and
+Handles real-time camera capture, YOLO11s object detection, and
 spatial analysis (clock-position, distance estimation, danger zone).
+
+Trained model detects CAMPUS-SPECIFIC objects only (18 classes):
+  person, bicycle, motorcycle, car, bench, chair, table, backpack,
+  laptop, cell phone, door, openedDoor, window, stairs, step, ramp,
+  pole, corridor
 
 Three main classes:
   CameraStream    — Threaded OpenCV frame capture with a ring buffer
-  ObjectDetector  — YOLOv11 inference wrapper
+  ObjectDetector  — YOLO11 inference wrapper
   SpatialAnalyzer — Converts bounding boxes into human-readable positions
+
+Danger Zone (tightened in 2025 overhaul):
+  X-ratio = 0.28 (was 0.35), Y-ratio = 0.40 (was 0.50)
+  This reduces false positives and focuses on true collision path.
+
+High-Priority Objects (immediate audio interrupt):
+  stairs, step, ramp, openedDoor, pole
+  These always call tts.alert() — skipping the queue entirely.
 """
 
 import time
@@ -19,7 +32,6 @@ from typing import List, Optional, Tuple, Dict
 import cv2
 import numpy as np
 
-# Lazy import YOLO (allow the module to load even if ultralytics not yet installed)
 try:
     from ultralytics import YOLO
     _YOLO_AVAILABLE = True
@@ -35,23 +47,31 @@ from config import (
     YOLO_IMG_SIZE, YOLO_USE_CUSTOM,
     DANGER_ZONE_X_RATIO, DANGER_ZONE_Y_RATIO,
     DISTANCE_NEAR_THRESHOLD, DISTANCE_MEDIUM_THRESHOLD,
-    COLOR_BBOX_DEFAULT, COLOR_BBOX_DANGER, COLOR_DANGER_ZONE,
-    COLOR_TEXT_BG, COLOR_TEXT_FG, BBOX_THICKNESS, FONT_SCALE, DEVICE,
+    COLOR_BBOX_DEFAULT, COLOR_BBOX_DANGER, COLOR_BBOX_HIGH_PRIORITY,
+    COLOR_DANGER_ZONE, COLOR_TEXT_BG, COLOR_TEXT_FG,
+    BBOX_THICKNESS, FONT_SCALE, DEVICE,
+    HIGH_PRIORITY_OBJECTS,
 )
 
 log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Detection Result dataclass (plain dict for simplicity)
+# Detection Result type
 # ─────────────────────────────────────────────────────────────────────────────
 #
 # Each detection is a dict with keys:
 #   label (str), confidence (float), bbox (x1,y1,x2,y2),
-#   clock_pos (str), distance_word (str), in_danger_zone (bool)
+#   clock_pos (str), distance_word (str), in_danger_zone (bool),
+#   is_high_priority (bool)
 #
 
 DetectionList = List[Dict]
+
+
+def is_high_priority(label: str) -> bool:
+    """Returns True if the label requires an immediate audio interrupt."""
+    return label.lower() in {obj.lower() for obj in HIGH_PRIORITY_OBJECTS}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -102,7 +122,6 @@ class CameraStream:
             with self._lock:
                 self._buffer.append(frame)
             self.frame_count += 1
-            # FPS calculation
             now = time.time()
             if now - self._last_fps_time >= 1.0:
                 self.fps = self.frame_count / (now - self._last_fps_time)
@@ -130,46 +149,49 @@ class CameraStream:
 class SpatialAnalyzer:
     """
     Converts bounding box coordinates into:
-      - Clock position (12 o'clock = straight ahead / top, 3 = right, etc.)
+      - Clock position (12 o'clock = straight ahead, 3 = right, etc.)
       - Distance word (very close / nearby / in the distance)
-      - Danger zone flag (bbox overlaps with center danger zone)
+      - Danger zone flag (bbox overlaps with tightened centre danger zone)
+
+    Danger zone tuning (2025):
+      X = 28% of frame width (centre band — tighter than previous 35%)
+      Y = 40% of frame height (centre band — tighter than previous 50%)
+      This reduces false alerts from objects at the periphery.
     """
 
     def __init__(self, frame_w: int = CAMERA_WIDTH, frame_h: int = CAMERA_HEIGHT):
         self.frame_w = frame_w
         self.frame_h = frame_h
 
-    def _bbox_center(self, x1: int, y1: int, x2: int, y2: int) -> Tuple[float, float]:
+    def _bbox_center(self, x1, y1, x2, y2) -> Tuple[float, float]:
         return ((x1 + x2) / 2, (y1 + y2) / 2)
 
-    def clock_position(self, x1: int, y1: int, x2: int, y2: int) -> str:
+    def clock_position(self, x1, y1, x2, y2) -> str:
         """
-        Maps bounding box center to a clock position string.
-        Divides the frame into a 4×3 grid and maps to clock hours.
-
-        Frame grid (clock labels):
+        Maps bounding box centre to a clock position string.
+        Frame grid:
             10 | 12 | 2
              9 | -- | 3
              8 |  6 | 4
         """
         cx, cy = self._bbox_center(x1, y1, x2, y2)
-        nx = cx / self.frame_w   # 0.0 (left) → 1.0 (right)
-        ny = cy / self.frame_h   # 0.0 (top)  → 1.0 (bottom)
+        nx = cx / self.frame_w
+        ny = cy / self.frame_h
 
-        if ny < 0.33:           # Top third
+        if ny < 0.33:
             if nx < 0.33:    return "10 o'clock"
             elif nx < 0.67:  return "12 o'clock"
             else:            return "2 o'clock"
-        elif ny < 0.67:         # Middle third
+        elif ny < 0.67:
             if nx < 0.33:    return "9 o'clock"
             elif nx < 0.67:  return "directly ahead"
             else:            return "3 o'clock"
-        else:                   # Bottom third
+        else:
             if nx < 0.33:    return "8 o'clock"
             elif nx < 0.67:  return "6 o'clock"
             else:            return "4 o'clock"
 
-    def distance_word(self, x1: int, y1: int, x2: int, y2: int) -> str:
+    def distance_word(self, x1, y1, x2, y2) -> str:
         """Estimates distance from bounding box area as % of frame area."""
         bbox_area  = (x2 - x1) * (y2 - y1)
         frame_area = self.frame_w * self.frame_h
@@ -182,17 +204,16 @@ class SpatialAnalyzer:
         else:
             return "in the distance"
 
-    def in_danger_zone(self, x1: int, y1: int, x2: int, y2: int) -> bool:
+    def in_danger_zone(self, x1, y1, x2, y2) -> bool:
         """
-        Returns True if the bounding box overlaps with the center danger zone.
-        Danger zone = centre X% × Y% of the frame.
+        Returns True if the bounding box overlaps the tightened centre danger zone.
+        Danger zone = centre 28% × 40% of the frame (tighter than previous 35% × 50%).
         """
         dz_x1 = self.frame_w * (0.5 - DANGER_ZONE_X_RATIO / 2)
         dz_x2 = self.frame_w * (0.5 + DANGER_ZONE_X_RATIO / 2)
         dz_y1 = self.frame_h * (0.5 - DANGER_ZONE_Y_RATIO / 2)
         dz_y2 = self.frame_h * (0.5 + DANGER_ZONE_Y_RATIO / 2)
 
-        # Intersection
         ix1 = max(x1, dz_x1);  iy1 = max(y1, dz_y1)
         ix2 = min(x2, dz_x2);  iy2 = min(y2, dz_y2)
         return (ix2 > ix1) and (iy2 > iy1)
@@ -212,8 +233,11 @@ class SpatialAnalyzer:
 
 class ObjectDetector:
     """
-    Wraps YOLOv11 for real-time object detection.
+    Wraps YOLO11 for real-time campus object detection.
     Returns a list of enriched detection dicts (with spatial analysis).
+
+    After campus fine-tuning, set YOLO_USE_CUSTOM = True in config.py to
+    load the fine-tuned weights from checkpoints/yolo11_campus.pt.
     """
 
     def __init__(self):
@@ -224,13 +248,14 @@ class ObjectDetector:
         weights = YOLO_CUSTOM_WEIGHTS if YOLO_USE_CUSTOM else YOLO_MODEL_NAME
         log.info(f"Loading YOLO: {weights} on device={DEVICE}")
         self.model   = YOLO(weights)
-        self.spatial = None     # Initialised on first frame (to get dimensions)
+        self.spatial = None
         log.info("YOLO model loaded ✓")
 
     def detect(self, frame: np.ndarray) -> DetectionList:
         """
-        Runs inference on a frame.
+        Runs YOLO inference on a frame.
         Returns list of dicts with detection info + spatial metadata.
+        High-priority objects (stairs, doors, poles) are flagged for immediate alert.
         """
         h, w = frame.shape[:2]
         if self.spatial is None:
@@ -257,18 +282,24 @@ class ObjectDetector:
                 clock  = self.spatial.clock_position(x1, y1, x2, y2)
                 dist   = self.spatial.distance_word(x1, y1, x2, y2)
                 danger = self.spatial.in_danger_zone(x1, y1, x2, y2)
+                hi_pri = is_high_priority(label)
 
                 detections.append({
-                    "label":          label,
-                    "confidence":     round(conf, 2),
-                    "bbox":           (x1, y1, x2, y2),
-                    "clock_pos":      clock,
-                    "distance_word":  dist,
-                    "in_danger_zone": danger,
+                    "label":            label,
+                    "confidence":       round(conf, 2),
+                    "bbox":             (x1, y1, x2, y2),
+                    "clock_pos":        clock,
+                    "distance_word":    dist,
+                    "in_danger_zone":   danger,
+                    "is_high_priority": hi_pri,
                 })
 
-        # Sort: danger zone detections first, then by descending confidence
-        detections.sort(key=lambda d: (not d["in_danger_zone"], -d["confidence"]))
+        # Sort: high-priority first, then danger zone, then confidence
+        detections.sort(key=lambda d: (
+            not d["is_high_priority"],
+            not d["in_danger_zone"],
+            -d["confidence"]
+        ))
         return detections
 
 
@@ -286,6 +317,11 @@ def draw_dev_overlay(
     """
     Draws bounding boxes, labels, clock positions, danger zone, FPS,
     and current caption onto the developer window frame.
+
+    Colour coding:
+      Green  = normal detection
+      Red    = object in danger zone
+      Orange = high-priority object (stairs, door, pole)
     """
     vis = frame.copy()
     h, w = vis.shape[:2]
@@ -297,16 +333,23 @@ def draw_dev_overlay(
     cv2.putText(vis, "DANGER ZONE", (dz[0] + 4, dz[1] + 18),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, COLOR_DANGER_ZONE, 1)
 
-    # Bounding boxes
+    # Bounding boxes with priority-aware colouring
     for det in detections:
         x1, y1, x2, y2 = det["bbox"]
-        color = COLOR_BBOX_DANGER if det["in_danger_zone"] else COLOR_BBOX_DEFAULT
+        if det["is_high_priority"]:
+            color = COLOR_BBOX_HIGH_PRIORITY   # Orange — stairs/door/pole
+        elif det["in_danger_zone"]:
+            color = COLOR_BBOX_DANGER          # Red — in danger zone
+        else:
+            color = COLOR_BBOX_DEFAULT         # Green — normal
         cv2.rectangle(vis, (x1, y1), (x2, y2), color, BBOX_THICKNESS)
 
         label_text = (
             f"{det['label']} {det['confidence']:.0%} | "
             f"{det['clock_pos']} | {det['distance_word']}"
         )
+        if det["is_high_priority"]:
+            label_text = "⚠ " + label_text
         (tw, th), _ = cv2.getTextSize(
             label_text, cv2.FONT_HERSHEY_SIMPLEX, FONT_SCALE, 1
         )
@@ -314,7 +357,7 @@ def draw_dev_overlay(
         cv2.putText(vis, label_text, (x1 + 2, y1 - 4),
                     cv2.FONT_HERSHEY_SIMPLEX, FONT_SCALE, COLOR_TEXT_FG, 1)
 
-    # FPS counter (top-left)
+    # FPS counter
     cv2.putText(vis, f"FPS: {fps:.1f}", (8, 22),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
