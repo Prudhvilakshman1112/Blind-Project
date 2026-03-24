@@ -3,15 +3,19 @@ data/dataset_loader.py
 ──────────────────────
 PyTorch Dataset classes for Blind-Project training.
 
-CAPTION DATASET (for BLIP fine-tuning):
-  TeluguCaptionDataset — Telugu captions from Hardik15/telugu-image-captions
-                         (HuggingFace, ~25K pairs, updated August 2024)
+CAPTION DATASET (for mBLIP LoRA fine-tuning):
+  CampusCaptionDataset — Your own campus photos + Telugu captions
+                         (see DATASET_CREATION_GUIDE.md)
+                         Reads from data/campus_captions/train.json / val.json
+
+  Uses Blip2Processor (for mBLIP / BLIP-2 architecture).
 
 DETECTION DATASET (for YOLO training):
   Handled directly by the YOLO training script via YAML configs.
-  This file provides a verification helper only.
+  CampusDetectionVerifier — verification helper only.
 
-REMOVED (outdated / unavailable):
+REMOVED (unavailable):
+  ✗ TeluguCaptionDataset — used Hardik15/telugu-image-captions (deleted March 2026)
   ✗ IndicCaptionDataset  — ai4bharat/IndicCOCO no longer available
   ✗ VizWizCaptionDataset — noisy; not relevant to campus
   ✗ COCOCaptionDataset   — too large (18 GB); irrelevant classes
@@ -30,8 +34,9 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from config import (
     CAMPUS_CAPTION_DIR, INDOOR_DIR,
-    BLIP_PRETRAINED_NAME,
-    BLIP_MAX_TRAIN_SAMPLES, BLIP_MAX_VAL_SAMPLES,
+    MBLIP_PRETRAINED_NAME,
+    MBLIP_MAX_TRAIN_SAMPLES, MBLIP_MAX_VAL_SAMPLES,
+    MBLIP_PROMPT,
     NUM_WORKERS,
 )
 from data.augmentations import get_train_transforms, get_val_transforms
@@ -41,23 +46,32 @@ log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Telugu Caption Dataset  (PRIMARY — HuggingFace)
+# Campus Caption Dataset  (PRIMARY — your own photos + Telugu captions)
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TeluguCaptionDataset(Dataset):
+class CampusCaptionDataset(Dataset):
     """
-    Telugu image-caption dataset from HuggingFace.
+    Human-collected campus image-caption dataset in Telugu.
 
-    Source  : Hardik15/telugu-image-captions (verified available, Aug 2024)
-    Size    : ~25,000 image-caption pairs in Telugu
-    Purpose : Fine-tune BLIP to generate native Telugu scene descriptions
+    Source  : Your own campus photos + Telugu captions written by native speakers
+    Purpose : Fine-tune mBLIP with LoRA to improve campus-specific Telugu descriptions
+    Format  : JSON file with list of {"idx", "file_name", "caption"} entries
 
-    JSON format (created by data/download_datasets.py --dataset telugu):
-      [ { "idx": 0, "file_name": "train_000000.jpg",
-          "caption": "<Telugu text>" }, … ]
+    See DATASET_CREATION_GUIDE.md for instructions on creating this dataset.
 
-    Download first:
-        python data/download_datasets.py --dataset telugu
+    JSON format (data/campus_captions/train.json or val.json):
+      [
+        {
+          "idx": 0,
+          "file_name": "train_000000.jpg",
+          "caption": "<Telugu caption text>"
+        },
+        ...
+      ]
+
+    Setup:
+        python data/download_datasets.py --dataset campus-setup
+    Then follow DATASET_CREATION_GUIDE.md to fill in images and captions.
     """
 
     def __init__(
@@ -75,8 +89,9 @@ class TeluguCaptionDataset(Dataset):
         json_file = CAMPUS_CAPTION_DIR / f"{split}.json"
         if not json_file.exists():
             raise FileNotFoundError(
-                f"Telugu captions JSON not found: {json_file}\n"
-                "Download first: python data/download_datasets.py --dataset telugu"
+                f"Campus captions JSON not found: {json_file}\n"
+                "Run setup first: python data/download_datasets.py --dataset campus-setup\n"
+                "Then add your campus images and Telugu captions per DATASET_CREATION_GUIDE.md"
             )
 
         with open(json_file, encoding="utf-8") as f:
@@ -97,7 +112,7 @@ class TeluguCaptionDataset(Dataset):
             random.shuffle(self.samples)
             self.samples = self.samples[:max_samples]
 
-        log.info(f"TeluguCaptionDataset {split}: {len(self.samples):,} samples loaded")
+        log.info(f"CampusCaptionDataset {split}: {len(self.samples):,} samples loaded")
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -109,20 +124,35 @@ class TeluguCaptionDataset(Dataset):
         if img_path and img_path.exists():
             image = Image.open(img_path).convert("RGB")
         else:
+            log.warning(f"Image not found: {img_path} — using blank grey placeholder")
             image = Image.new("RGB", (224, 224), color=(128, 128, 128))
 
         image = self.transform(image)
 
         if self.processor:
+            # mBLIP uses prompt + caption together during training
+            # The prompt tells the model to respond in Telugu
             encoding = self.processor(
                 images=image,
-                text=caption,
+                text=MBLIP_PROMPT,
                 return_tensors="pt",
                 padding="max_length",
                 truncation=True,
-                max_length=80,   # Telugu sentences may be slightly longer
+                max_length=40,    # Prompt is short
             )
-            return {k: v.squeeze(0) for k, v in encoding.items()}
+
+            # Encode the target caption separately as labels
+            label_encoding = self.processor.tokenizer(
+                caption,
+                return_tensors="pt",
+                padding="max_length",
+                truncation=True,
+                max_length=80,    # Telugu output tokens
+            )
+
+            result = {k: v.squeeze(0) for k, v in encoding.items()}
+            result["labels"] = label_encoding["input_ids"].squeeze(0)
+            return result
 
         return {"image": image, "caption": caption}
 
@@ -180,27 +210,29 @@ class CampusDetectionVerifier:
 
 def get_dataloaders(
     processor,
-    train_batch_size: int = 4,
-    val_batch_size: int = 8,
+    train_batch_size: int = 1,
+    val_batch_size: int = 1,
 ) -> Tuple[DataLoader, DataLoader]:
     """
-    Returns (train_loader, val_loader) ready for BLIP Telugu fine-tuning.
+    Returns (train_loader, val_loader) ready for mBLIP LoRA fine-tuning.
 
-    Uses TeluguCaptionDataset as the single training source.
-    Ensures Telugu captions are downloaded first:
-        python data/download_datasets.py --dataset telugu
+    Uses CampusCaptionDataset — your own campus photos + Telugu captions.
+    Follow DATASET_CREATION_GUIDE.md to prepare your dataset first.
+
+    Note: Batch size defaults to 1 for RTX 3050 4 GB VRAM.
+    Increase to 2–4 on Colab/Kaggle with 15+ GB VRAM.
     """
-    train_ds = TeluguCaptionDataset(
+    train_ds = CampusCaptionDataset(
         split="train",
         processor=processor,
         augment=True,
-        max_samples=BLIP_MAX_TRAIN_SAMPLES,
+        max_samples=MBLIP_MAX_TRAIN_SAMPLES,
     )
-    val_ds = TeluguCaptionDataset(
+    val_ds = CampusCaptionDataset(
         split="val",
         processor=processor,
         augment=False,
-        max_samples=BLIP_MAX_VAL_SAMPLES,
+        max_samples=MBLIP_MAX_VAL_SAMPLES,
     )
 
     log.info(f"DataLoaders ready — train: {len(train_ds):,} | val: {len(val_ds):,}")
@@ -211,7 +243,7 @@ def get_dataloaders(
         shuffle=True,
         num_workers=NUM_WORKERS,
         pin_memory=(NUM_WORKERS > 0),
-        drop_last=True,
+        drop_last=len(train_ds) > train_batch_size,  # Only drop if enough samples
     )
     val_loader = DataLoader(
         val_ds,

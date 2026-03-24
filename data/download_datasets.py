@@ -1,23 +1,30 @@
 """
 data/download_datasets.py
 ─────────────────────────
-Downloads all datasets needed for Blind-Project training.
+Downloads / prepares all datasets needed for Blind-Project training.
 
 DATASETS:
-  1. Telugu Image Captions  — Hardik15/telugu-image-captions (HuggingFace)
-                               ~25,000 image-caption pairs in Telugu
-                               Updated August 2024 — verified available
-  2. Campus Detection Data  — Roboflow indoor/campus datasets
+  1. Campus Caption Dataset  — YOUR OWN photos + Telugu captions
+                               (see DATASET_CREATION_GUIDE.md to create this)
+  2. Campus Detection Data   — Roboflow indoor/campus datasets
                                (requires manual download — see MANUAL_DOWNLOADS.md)
 
-REMOVED (outdated / unavailable / too large):
-  ✗ ai4bharat/IndicCOCO    — No longer available on HuggingFace
-  ✗ VizWiz-Captions        — Noisy blind-user photos (irrelevant to campus)
-  ✗ MS-COCO 2017 (~18 GB)  — Too large; irrelevant objects hurt campus accuracy
+WHY NO HuggingFace TELUGU DATASETS:
+  All previously referenced HF Telugu image-caption datasets have been
+  confirmed deleted or made private as of March 2026:
+    ✗ Hardik15/telugu-image-captions   — 404 Deleted
+    ✗ FutureBeeAI/telugu-image-captions — 404 Deleted
+    ✗ ai4bharat/IndicCOCO              — 404 Deleted
+    ✗ Telugu-LLM-Labs/*               — Private/unavailable
+
+  Since mBLIP already knows Telugu natively, we only need YOUR OWN
+  campus photos (300-500 images) with Telugu captions written by you.
+  This is better anyway — it teaches mBLIP your specific campus environment.
 
 Usage:
-    python data/download_datasets.py --dataset telugu
+    python data/download_datasets.py --dataset campus-setup
     python data/download_datasets.py --dataset manual-info
+    python data/download_datasets.py --dataset verify
     python data/download_datasets.py --dataset all
 """
 
@@ -35,161 +42,80 @@ log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Telugu Image Captions  (HuggingFace: Hardik15/telugu-image-captions)
+# Campus Caption Dataset Setup
+# Create the folder structure for your human-collected campus caption dataset.
 # ─────────────────────────────────────────────────────────────────────────────
 
-HF_TELUGU_DATASET = "Hardik15/telugu-image-captions"
+SAMPLE_TRAIN = [
+    {
+        "idx": 0,
+        "file_name": "train_000000.jpg",
+        "caption": "ఒక వ్యక్తి నడవలో నడుస్తున్నాడు, ముందు మెట్లు కనిపిస్తున్నాయి."
+    },
+    {
+        "idx": 1,
+        "file_name": "train_000001.jpg",
+        "caption": "ఒక విద్యార్థి బ్యాగు భుజాన వేసుకుని తరగతి గది తలుపు దగ్గర నిలబడ్డాడు."
+    }
+]
+
+SAMPLE_VAL = [
+    {
+        "idx": 0,
+        "file_name": "val_000000.jpg",
+        "caption": "కాలేజ్ ఆవరణలో బెంచీలు మరియు చెట్లు ఉన్నాయి."
+    }
+]
 
 
-def download_telugu_captions() -> None:
+def setup_campus_dataset() -> None:
     """
-    Downloads the Telugu image-caption dataset from HuggingFace.
+    Creates the folder structure for the human campus caption dataset
+    and places sample JSON files showing the required format.
 
-    Dataset: Hardik15/telugu-image-captions
-    Size   : ~25,000 image-caption pairs in Telugu
-    License: CC-BY-4.0
-    Updated: August 2024
-
-    Saves:
-      data/telugu_captions/train.json
-      data/telugu_captions/val.json
-      data/telugu_captions/images/      ← actual image files
-
-    Install requirement: pip install datasets huggingface-hub Pillow
+    After running this, follow DATASET_CREATION_GUIDE.md to fill in your
+    own photos and Telugu captions.
     """
-    log.info("=" * 60)
-    log.info("Downloading Telugu Image Captions (HuggingFace) …")
-    log.info(f"  Dataset : {HF_TELUGU_DATASET}")
-    log.info("  Size    : ~25,000 image-caption pairs in Telugu")
-    log.info("=" * 60)
-
-    try:
-        from datasets import load_dataset
-        from PIL import Image as PILImage
-        import io
-    except ImportError:
-        log.error(
-            "Required libraries not installed.\n"
-            "Run: pip install datasets huggingface-hub Pillow"
-        )
-        return
+    log.info("=" * 65)
+    log.info("  Setting up Campus Caption Dataset folder structure …")
+    log.info("=" * 65)
 
     CAMPUS_CAPTION_DIR.mkdir(parents=True, exist_ok=True)
-    train_json = CAMPUS_CAPTION_DIR / "train.json"
-    val_json   = CAMPUS_CAPTION_DIR / "val.json"
-    img_dir    = CAMPUS_CAPTION_DIR / "images"
-
-    if train_json.exists() and val_json.exists():
-        log.info("Telugu captions already downloaded ✓")
-        return
-
+    img_dir = CAMPUS_CAPTION_DIR / "images"
     img_dir.mkdir(parents=True, exist_ok=True)
 
-    log.info("Loading dataset from HuggingFace (first run may take a few minutes) …")
-    try:
-        ds = load_dataset(HF_TELUGU_DATASET, trust_remote_code=True)
-    except Exception as e:
-        log.error(f"Failed to load dataset: {e}")
-        log.error(
-            "\nTroubleshooting:\n"
-            "  1. Ensure you have internet access\n"
-            "  2. Run: huggingface-cli login  (if dataset requires auth)\n"
-            f"  3. Manually browse: https://huggingface.co/datasets/{HF_TELUGU_DATASET}\n"
-            "  4. If dataset unavailable, see MANUAL_DOWNLOADS.md for alternatives"
-        )
+    train_json = CAMPUS_CAPTION_DIR / "train.json"
+    val_json   = CAMPUS_CAPTION_DIR / "val.json"
+
+    if train_json.exists() and val_json.exists():
+        # Count existing entries
+        with open(train_json, encoding="utf-8") as f:
+            n_train = len(json.load(f))
+        with open(val_json, encoding="utf-8") as f:
+            n_val = len(json.load(f))
+        log.info(f"Campus caption dataset already exists:")
+        log.info(f"  train.json → {n_train} entries")
+        log.info(f"  val.json   → {n_val} entries")
+        log.info(f"  images/    → {CAMPUS_CAPTION_DIR / 'images'}")
+        log.info("Nothing overwritten. Delete train.json / val.json to reset.")
         return
 
-    # Detect available splits
-    splits = list(ds.keys())
-    log.info(f"Available splits: {splits}")
+    # Write sample JSON files (format reference)
+    with open(train_json, "w", encoding="utf-8") as f:
+        json.dump(SAMPLE_TRAIN, f, ensure_ascii=False, indent=2)
+    with open(val_json, "w", encoding="utf-8") as f:
+        json.dump(SAMPLE_VAL, f, ensure_ascii=False, indent=2)
 
-    # Use train split; if only one split, create 90/10 split
-    if "train" in splits and "validation" in splits:
-        train_split = ds["train"]
-        val_split   = ds["validation"]
-    elif "train" in splits and "test" in splits:
-        train_split = ds["train"]
-        val_split   = ds["test"]
-    elif "train" in splits:
-        full = ds["train"]
-        split_ds = full.train_test_split(test_size=0.1, seed=42)
-        train_split = split_ds["train"]
-        val_split   = split_ds["test"]
-    else:
-        full = ds[splits[0]]
-        split_ds = full.train_test_split(test_size=0.1, seed=42)
-        train_split = split_ds["train"]
-        val_split   = split_ds["test"]
-
-    def _process_split(split_data, json_path: Path, split_name: str):
-        records = []
-        features = split_data.features
-        log.info(f"Processing {split_name} ({len(split_data)} items) …")
-        log.info(f"  Column names: {split_data.column_names}")
-
-        # Detect column names flexibly
-        caption_col = None
-        for col in ["caption", "telugu_caption", "te_caption", "text", "label"]:
-            if col in split_data.column_names:
-                caption_col = col
-                break
-        if caption_col is None:
-            caption_col = split_data.column_names[-1]
-            log.warning(f"  Caption column not detected; using last column: '{caption_col}'")
-
-        image_col = None
-        for col in ["image", "img", "pixel_values"]:
-            if col in split_data.column_names:
-                image_col = col
-                break
-
-        for idx, item in enumerate(split_data):
-            caption = str(item.get(caption_col, "")).strip()
-            if not caption:
-                continue
-
-            img_filename = f"{split_name}_{idx:06d}.jpg"
-            img_path = img_dir / img_filename
-
-            # Save image if available in dataset
-            if image_col and not img_path.exists():
-                try:
-                    img_data = item[image_col]
-                    if isinstance(img_data, dict) and "bytes" in img_data:
-                        pil_img = PILImage.open(io.BytesIO(img_data["bytes"])).convert("RGB")
-                    elif hasattr(img_data, "save"):
-                        pil_img = img_data.convert("RGB")
-                    else:
-                        pil_img = None
-
-                    if pil_img:
-                        pil_img.save(str(img_path), "JPEG", quality=90)
-                except Exception:
-                    img_path = None  # type: ignore
-
-            records.append({
-                "idx":       idx,
-                "file_name": img_filename if img_path and img_path.exists() else "",
-                "caption":   caption,
-            })
-
-            if idx % 1000 == 0:
-                log.info(f"  → {idx}/{len(split_data)} processed …")
-
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
-        log.info(f"  Saved {len(records)} records → {json_path}")
-        return records
-
-    train_records = _process_split(train_split, train_json, "train")
-    val_records   = _process_split(val_split,   val_json,   "val")
-
-    log.info("=" * 60)
-    log.info(f"Telugu captions download complete ✓")
-    log.info(f"  Train : {len(train_records):,} pairs → {train_json}")
-    log.info(f"  Val   : {len(val_records):,} pairs  → {val_json}")
-    log.info(f"  Images: {img_dir}")
-    log.info("=" * 60)
+    log.info("")
+    log.info("  ✓ Created folder structure:")
+    log.info(f"    {CAMPUS_CAPTION_DIR}/")
+    log.info(f"    ├── train.json  ← 2 sample entries (replace with your data)")
+    log.info(f"    ├── val.json    ← 1 sample entry  (replace with your data)")
+    log.info(f"    └── images/     ← place your .jpg campus photos here")
+    log.info("")
+    log.info("  NEXT STEP: Read DATASET_CREATION_GUIDE.md (in project root)")
+    log.info("  It tells you exactly what photos to take and how to write Telugu captions.")
+    log.info("=" * 65)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -236,36 +162,42 @@ def show_manual_info() -> None:
 
 def verify_downloads() -> None:
     """Checks which datasets are present and reports status."""
-    print("\n" + "=" * 50)
+    print("\n" + "=" * 60)
     print("  Dataset Verification Status")
-    print("=" * 50)
+    print("=" * 60)
 
-    # Telugu captions
+    # Campus captions (mBLIP fine-tuning)
     train_ok = (CAMPUS_CAPTION_DIR / "train.json").exists()
     val_ok   = (CAMPUS_CAPTION_DIR / "val.json").exists()
     if train_ok and val_ok:
-        import json as _json
         with open(CAMPUS_CAPTION_DIR / "train.json", encoding="utf-8") as f:
-            n = len(_json.load(f))
-        print(f"  ✓ Telugu captions : {n:,} train pairs")
+            n_train = len(json.load(f))
+        with open(CAMPUS_CAPTION_DIR / "val.json", encoding="utf-8") as f:
+            n_val = len(json.load(f))
+        if n_train <= 2:
+            print(f"  ⚠ Campus captions : only sample data ({n_train} train entries)")
+            print(f"    → Follow DATASET_CREATION_GUIDE.md to add your own images")
+        else:
+            print(f"  ✓ Campus captions : {n_train} train + {n_val} val pairs")
     else:
-        print("  ✗ Telugu captions : NOT downloaded")
-        print("    → Run: python data/download_datasets.py --dataset telugu")
+        print("  ✗ Campus captions : NOT set up")
+        print("    → Run: python data/download_datasets.py --dataset campus-setup")
 
-    # Campus detection datasets
+    # Campus detection datasets (YOLO)
     if INDOOR_DIR.exists():
         subs = [d for d in INDOOR_DIR.iterdir() if d.is_dir()]
         if subs:
-            print(f"  ✓ Campus datasets : {len(subs)} sub-dataset(s) found")
+            print(f"  ✓ Campus detection: {len(subs)} sub-dataset(s) found")
             for s in subs:
                 print(f"      → {s.name}")
         else:
-            print("  ✗ Campus datasets : folder empty")
+            print("  ✗ Campus detection: folder empty")
             print("    → See: data/MANUAL_DOWNLOADS.md")
     else:
-        print("  ✗ Campus datasets : NOT downloaded")
+        print("  ✗ Campus detection: NOT downloaded")
         print("    → See: data/MANUAL_DOWNLOADS.md")
-    print("=" * 50 + "\n")
+
+    print("=" * 60 + "\n")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -274,18 +206,18 @@ def verify_downloads() -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Download datasets for Blind-Project (Telugu Campus Navigation)"
+        description="Download / prepare datasets for Blind-Project (mBLIP Campus Navigation)"
     )
     parser.add_argument(
         "--dataset",
-        choices=["telugu", "all", "manual-info", "verify"],
+        choices=["campus-setup", "all", "manual-info", "verify"],
         default="all",
         help=(
-            "Which dataset to download:\n"
-            "  telugu      — Telugu image captions (HuggingFace, ~25K pairs)\n"
-            "  all         — All auto-downloadable datasets (default)\n"
-            "  manual-info — Show instructions for Roboflow/Kaggle manual downloads\n"
-            "  verify      — Check which datasets are already present"
+            "Which dataset action to perform:\n"
+            "  campus-setup — Create folder structure for your campus caption dataset\n"
+            "  all          — Run campus-setup + show manual download info (default)\n"
+            "  manual-info  — Show Roboflow/Kaggle download instructions for YOLO\n"
+            "  verify       — Check which datasets are already present"
         ),
     )
     args = parser.parse_args()
@@ -294,13 +226,13 @@ def main():
         show_manual_info()
     elif args.dataset == "verify":
         verify_downloads()
+    elif args.dataset == "campus-setup":
+        setup_campus_dataset()
     else:
-        # all or telugu
-        if args.dataset in ("telugu", "all"):
-            download_telugu_captions()
-        if args.dataset == "all":
-            print()
-            show_manual_info()
+        # all
+        setup_campus_dataset()
+        print()
+        show_manual_info()
 
     log.info("Done. Run 'python data/download_datasets.py --dataset verify' to check status.")
 

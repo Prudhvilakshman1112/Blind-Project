@@ -1,7 +1,7 @@
 # ============================================================
 # Blind-Project: Campus Scene Understanding & Telugu Voice Navigation
 # requirements.txt — All dependencies for training and runtime
-# Python 3.10+  |  Updated: March 2025
+# Python 3.10+  |  Updated: March 2026 (mBLIP migration)
 # ============================================================
 
 # ── Core Deep Learning ───────────────────────────────────────
@@ -9,7 +9,7 @@ torch>=2.1.0
 torchvision>=0.16.0
 torchaudio>=2.1.0
 
-# ── Hugging Face (BLIP model + tokenizer + dataset download) ─
+# ── Hugging Face (mBLIP model + tokenizer + datasets) ────────
 transformers>=4.40.0
 accelerate>=0.30.0
 datasets>=2.19.0
@@ -17,6 +17,16 @@ huggingface-hub>=0.23.0
 evaluate>=0.4.1
 sentencepiece>=0.1.99
 protobuf>=3.20.0
+
+# ── LoRA Fine-tuning — mBLIP campus adapter ──────────────────
+# Used in training/train_captioner.py to fine-tune only LoRA layers
+peft>=0.10.0
+
+# ── 4-bit Quantization — fits mBLIP in 4 GB VRAM (RTX 3050) ─
+# NOTE: On native Windows, bitsandbytes may not install correctly.
+# If pip install fails, run in WSL2 or use Google Colab / Kaggle instead.
+# If bitsandbytes unavailable, caption_module.py falls back to float16.
+bitsandbytes>=0.43.0
 
 # ── Object Detection — YOLO11 ────────────────────────────────
 ultralytics>=8.3.0
@@ -37,9 +47,9 @@ pyttsx3>=2.90
 edge-tts>=6.1.9
 pygame>=2.5.0              # Required for edge-tts audio playback
 
-# ── Telugu Translation ────────────────────────────────────────
-# Used to translate English alert text → Telugu (pre-fine-tuning)
-# After BLIP fine-tuning, scene descriptions are already Telugu
+# ── Translation (English danger alerts → Telugu) ─────────────
+# mBLIP scene descriptions are already in Telugu.
+# deep-translator is used only for English-origin alert strings.
 deep-translator>=1.11.4
 
 # ── Caption Evaluation Metrics ───────────────────────────────

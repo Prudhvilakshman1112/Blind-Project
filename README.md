@@ -2,7 +2,7 @@
 
 **Real-time, Telugu-language assistive navigation for blind users on college/university campuses.**
 
-> ⚠ **Documentation updated March 2025.** The project has been fully overhauled to use focused, campus-specific datasets. Old references to MS-COCO, VizWiz, and AI4Bharat IndicCOCO have been removed.
+> ⚠ **Documentation updated March 2026.** The captioning module has been migrated from standard BLIP fine-tuning to **mBLIP** (multilingual BLIP-2), which natively supports Telugu. See the [mBLIP section](#mblip-architecture) below.
 
 ---
 
@@ -10,30 +10,44 @@
 
 A Python application that:
 1. **Detects** campus-relevant objects in real time (YOLO11 — 18 classes: doors, stairs, poles, people, chairs, etc.)
-2. **Describes** the scene in **Telugu** (BLIP fine-tuned on Telugu image captions)
+2. **Describes** the scene in **Telugu natively** (mBLIP — multilingual BLIP-2 supporting 96 languages including Telugu)
 3. **Speaks** alerts and descriptions in Telugu via Microsoft Neural TTS (`te-IN-ShrutiNeural`)
 
 **Priority system:**
-- 🔴 **Stairs / Poles / Open Doors** → immediate audio interrupt ("Alert! Stairs very close, directly ahead!")
-- 🟠 **Any object in danger zone** → high-priority alert
-- 🟢 **General scene description** → spoken every 4 seconds
+- 🔴 **Stairs / Poles / Open Doors** → immediate audio interrupt ("హెచ్చరిక! మెట్లు చాలా దగ్గరగా!")
+- 🟠 **Any object in danger zone** → high-priority alert ("జాగ్రత్త! ...")
+- 🟢 **General scene description** → spoken every 4 seconds (in Telugu, from mBLIP)
 
 ---
 
-## Dataset Strategy (2025)
+## mBLIP Architecture
+
+The captioning module uses **mBLIP** (`Gregor/mblip-mt0-xl`):
+- Multilingual BLIP-2 model trained on **96 languages including Telugu**
+- Describes campus scenes **in Telugu natively** — no translation step needed
+- ~5 GB download on first run (cached, only once)
+- Optional LoRA fine-tuning on your own campus photos for domain-specific vocabulary
+
+| | Old (standard BLIP) | New (mBLIP) |
+|---|---|---|
+| Telugu ability | Needed fine-tuning on deleted dataset | ✅ Native Telugu from day 1 |
+| Dataset needed | 25,000+ Telugu pairs (unavailable) | 300–500 campus photos (you create) |
+| VRAM (4 GB RTX 3050) | ✓ Fine-tuning OK | ✓ 4-bit quantization enabled |
+| Caption quality | Depended on dataset quality | Multilingual model, high quality |
+
+---
+
+## Dataset Strategy (March 2026)
 
 | Use | Dataset | Source | Size |
 |-----|---------|--------|------|
-| Telugu captions (BLIP) | `Hardik15/telugu-image-captions` | HuggingFace | ~25K pairs |
+| Scene captions (mBLIP) | **Your own campus photos + Telugu captions** | You collect | 300–500 images |
 | Campus detection (YOLO) | SCIN Indoor Navigation | Roboflow | 544 images |
 | Campus detection (YOLO) | Akhash Indoor Navigation | Roboflow | 1,115 images |
 | Campus detection (YOLO) | Blind Indoor Navigation | Roboflow | manual |
 | Campus detection (YOLO) | Stairs Detection | Kaggle | 1,000 images |
 
-**Why NOT full COCO / VizWiz / AI4Bharat IndicCOCO:**
-- MS-COCO: 18 GB, 80 classes — elephants, frisbees, pizzas — useless for campus and hurts accuracy
-- VizWiz: Intentionally blurry/noisy blind-user photos — adds training noise without improvement
-- AI4Bharat IndicCOCO: No longer available on HuggingFace (confirmed March 2025)
+**See [DATASET_CREATION_GUIDE.md](DATASET_CREATION_GUIDE.md) for full instructions on creating your campus caption dataset.**
 
 ---
 
@@ -44,58 +58,61 @@ Blind-Project/
 ├── main.py                    ← Main application entry point
 ├── config.py                  ← All settings (edit before training)
 ├── requirements.txt
+├── DATASET_CREATION_GUIDE.md  ← HOW TO CREATE YOUR CAMPUS DATASET ← START HERE
 │
 ├── src/
 │   ├── vision_module.py       ← YOLO detection + spatial analysis
-│   ├── caption_module.py      ← BLIP captioning + Telugu descriptions
+│   ├── caption_module.py      ← mBLIP captioning (Telugu native)
 │   ├── audio_module.py        ← Priority TTS (edge-tts / pyttsx3)
 │   └── ocr_module.py          ← EasyOCR (auto-triggered + manual)
 │
 ├── data/
-│   ├── download_datasets.py   ← Download Telugu captions from HuggingFace
-│   ├── dataset_loader.py      ← PyTorch Dataset classes
+│   ├── download_datasets.py   ← Setup campus caption folder structure
+│   ├── dataset_loader.py      ← PyTorch Dataset classes (mBLIP)
 │   ├── augmentations.py       ← Image augmentation pipeline
 │   ├── MANUAL_DOWNLOADS.md    ← Roboflow/Kaggle download instructions
-│   ├── telugu_captions/       ← Auto-downloaded → train.json, val.json, images/
+│   ├── campus_captions/       ← YOUR campus photos + Telugu captions
+│   │   ├── train.json             ← Training caption pairs
+│   │   ├── val.json               ← Validation caption pairs
+│   │   └── images/                ← Your campus .jpg photos
 │   └── indoor_campus/         ← Manual download → Roboflow sub-folders
 │
 ├── training/
 │   ├── train_detector.py      ← Fine-tune YOLO11 on campus datasets
-│   ├── train_captioner.py     ← Fine-tune BLIP on Telugu captions
-│   ├── evaluate.py            ← Evaluate BLIP with BLEU/METEOR
+│   ├── train_captioner.py     ← Fine-tune mBLIP with LoRA
+│   ├── evaluate.py            ← Evaluate mBLIP with BLEU/METEOR
 │   └── export_models.py       ← Export to ONNX / OpenVINO
 │
 ├── checkpoints/               ← Saved model weights
 │   ├── yolo11_campus.pt       ← After YOLO training
-│   └── blip_telugu/best/      ← After BLIP training
+│   └── mblip_campus/best/     ← LoRA adapter after mBLIP training
 │
-├── demo/                      ← Demo version (do NOT modify — separate system)
-│   └── README_DEMO.md
-│
+├── demo/                      ← Demo version (do NOT modify)
 └── TRAINING_GUIDE.md          ← Step-by-step training instructions
 ```
 
 ---
 
-## Quick Start (Run Before Training)
+## Quick Start
 
 ### 1. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Download Telugu Captions (Auto)
+### 2. Set Up Campus Caption Dataset Folder
 ```bash
-python data/download_datasets.py --dataset telugu
+python data/download_datasets.py --dataset campus-setup
 ```
+Then follow **[DATASET_CREATION_GUIDE.md](DATASET_CREATION_GUIDE.md)** to add your campus photos.
 
-### 3. Download Campus Detection Datasets (Manual)
+### 3. Download Campus Detection Datasets (Manual — for YOLO)
 ```bash
 python data/download_datasets.py --dataset manual-info
 ```
-Follow the instructions. Download 3–4 Roboflow datasets → place in `data/indoor_campus/`.
+Follow instructions. Download 3–4 Roboflow datasets → place in `data/indoor_campus/`.
 
-### 4. Verify
+### 4. Verify Everything is Ready
 ```bash
 python data/download_datasets.py --dataset verify
 ```
@@ -107,13 +124,13 @@ python data/download_datasets.py --dataset verify
 See **[TRAINING_GUIDE.md](TRAINING_GUIDE.md)** for full step-by-step instructions.
 
 ```bash
-# Step 1: Train campus YOLO detector (needs manual datasets first)
+# Step 1: Train campus YOLO detector (needs Roboflow datasets first)
 python training/train_detector.py --dataset campus
 
-# Step 2: Fine-tune BLIP on Telugu captions
+# Step 2: Fine-tune mBLIP on your campus captions (LoRA — only ~100 MB adapter)
 python training/train_captioner.py
 
-# Step 3: Evaluate
+# Step 3: Evaluate mBLIP on your campus val set
 python training/evaluate.py
 ```
 
@@ -123,8 +140,8 @@ python training/evaluate.py
 
 Before running, set these flags in `config.py` after training:
 ```python
-YOLO_USE_CUSTOM  = True    # Use trained campus YOLO weights
-BLIP_USE_FINETUNED = True  # Use Telugu fine-tuned BLIP
+YOLO_USE_CUSTOM    = True    # Use trained campus YOLO weights
+MBLIP_USE_FINETUNED = True  # Use campus LoRA adapter
 ```
 
 ```bash
@@ -159,7 +176,7 @@ python main.py --no-window
 | Furniture | `bench`, `chair`, `table`, `backpack`, `laptop`, `cell phone` |
 | Navigation | `door`, `openedDoor`, `window`, `stairs`, `step`, `ramp`, `pole`, `corridor` |
 
-**High-Priority (immediate alert):** `stairs`, `step`, `ramp`, `openedDoor`, `pole`
+**High-Priority (immediate interrupt alert):** `stairs`, `step`, `ramp`, `openedDoor`, `pole`
 
 ---
 
@@ -167,13 +184,14 @@ python main.py --no-window
 
 | Key Setting | Default | Notes |
 |-------------|---------|-------|
+| `MBLIP_PRETRAINED_NAME` | `Gregor/mblip-mt0-xl` | Base mBLIP model |
+| `MBLIP_USE_FINETUNED` | `False` | Set `True` after campus LoRA training |
+| `MBLIP_USE_4BIT` | `True` | 4-bit quantization for 4 GB VRAM (RTX 3050) |
+| `MBLIP_PROMPT` | `"Describe this campus scene in Telugu:"` | Telugu output trigger |
 | `YOLO_MODEL_NAME` | `yolo11s.pt` | Use `yolo11m.pt` for +8% mAP if 8GB+ VRAM |
 | `YOLO_USE_CUSTOM` | `False` | Set `True` after campus training |
-| `BLIP_USE_FINETUNED` | `False` | Set `True` after Telugu training |
 | `TELUGU_MODE` | `True` | All output in Telugu |
 | `TTS_ENGINE` | `edge-tts` | Set `pyttsx3` for fully offline use |
-| `DANGER_ZONE_X_RATIO` | `0.28` | 28% width centre band |
-| `DANGER_ZONE_Y_RATIO` | `0.40` | 40% height centre band |
 
 ---
 
@@ -181,10 +199,12 @@ python main.py --no-window
 
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
-| GPU VRAM | 4 GB | 6–8 GB |
+| GPU VRAM | 4 GB (with MBLIP_USE_4BIT=True) | 8 GB+ (for full float16) |
 | RAM | 8 GB | 16 GB |
-| Internet | Required for edge-tts | — |
+| Internet | Required (mBLIP download + edge-tts) | — |
 | Camera | USB webcam | 720p+ |
+
+> **For cloud training:** Google Colab (T4, 15 GB VRAM) or Kaggle (P100, 16 GB VRAM) are free options. Set `MBLIP_USE_4BIT = False` for full-quality training on cloud.
 
 ---
 

@@ -1,79 +1,75 @@
-# Next Steps After Training — Blind-Project
+# Next Steps — mBLIP Campus Navigation
 
-> **Updated March 2025.** After the dataset overhaul is complete and training is done, here are the recommended next steps.
+> Updated March 2026 — mBLIP migration complete.
+
+## Immediate Actions Required
+
+### 1. Create Your Campus Caption Dataset ⬅ DO THIS FIRST
+Follow **[DATASET_CREATION_GUIDE.md](DATASET_CREATION_GUIDE.md)** to:
+- Take 300–500 photos on your college campus
+- Write one Telugu caption per photo
+- Format as `data/campus_captions/train.json` and `val.json`
+
+### 2. Download YOLO Campus Detection Datasets
+```bash
+python data/download_datasets.py --dataset manual-info
+```
+Download the 4 Roboflow/Kaggle datasets listed.
+
+### 3. Install New Dependencies
+```bash
+pip install -r requirements.txt
+```
+Key new packages: `peft` (LoRA training), `bitsandbytes` (4-bit quantization)
 
 ---
 
-## Immediate Post-Training Steps
+## Training Sequence (after dataset is ready)
 
-### 1. Enable Custom Models in config.py
-```python
-YOLO_USE_CUSTOM    = True    # Load checkpoints/yolo11_campus.pt
-BLIP_USE_FINETUNED = True    # Load checkpoints/blip_telugu/best/
-```
-
-### 2. Test on Live Camera
 ```bash
+# 1. Train YOLO (campus object detection)
+python training/train_detector.py --dataset campus
+
+# 2. Fine-tune mBLIP with LoRA (campus Telugu captions)
+python training/train_captioner.py
+
+# 3. Evaluate mBLIP
+python training/evaluate.py
+
+# 4. Run the app
 python main.py
 ```
-Walk through:
-- A **doorway** → confirm Telugu alert fires immediately
-- Near **stairs** → confirm high-priority interrupt
-- Hold a **sign** → confirm OCR auto-triggers without pressing 'R'
-
-### 3. Evaluate Metrics
-```bash
-python training/evaluate.py --max-samples 500
-```
-Check `logs/eval_report.json` — target: BLEU-4 ≥ 0.25, METEOR ≥ 0.28.
 
 ---
 
-## If Metrics Are Low
+## Testing mBLIP Zero-Shot (Before Training)
 
-| Problem | Fix |
-|---------|-----|
-| BLEU-4 < 0.20 | Train more epochs: `--epochs 12` |
-| YOLO misses stairs | Add more stair images: re-download larger Roboflow dataset |
-| Poor Telugu pronunciation | Check edge-tts voice: `EDGE_TTS_VOICE = "te-IN-MohanNeural"` (male alt) |
+You can test mBLIP's Telugu ability right now, before any fine-tuning:
 
----
-
-## Optional Upgrades
-
-### A. Upgrade to YOLO11m (Higher Accuracy)
-If your GPU has 8+ GB VRAM:
 ```python
-# In config.py:
-YOLO_MODEL_NAME = "yolo11m.pt"   # ~8% higher mAP than yolo11s
-```
-Retrain: `python training/train_detector.py --model yolo11m.pt`
+from transformers import Blip2Processor, Blip2ForConditionalGeneration
+from PIL import Image
+import torch
 
-### B. Offline TTS (No Internet Required)
-For fully offline operation:
-```python
-# In config.py:
-TTS_ENGINE = "pyttsx3"     # English only, but no internet needed
-TELUGU_MODE = False         # Revert to English for offline
-```
+proc  = Blip2Processor.from_pretrained("Gregor/mblip-mt0-xl")
+model = Blip2ForConditionalGeneration.from_pretrained(
+    "Gregor/mblip-mt0-xl", torch_dtype=torch.float16
+).to("cuda")
 
-### C. Edge Deployment (Export to ONNX)
-```bash
-python training/export_models.py
+img   = Image.open("your_campus_photo.jpg")
+inp   = proc(images=img, text="Describe this campus scene in Telugu:", return_tensors="pt").to("cuda")
+ids   = model.generate(**inp, max_new_tokens=80)
+print(proc.decode(ids[0], skip_special_tokens=True))
 ```
-Loads BLIP from `checkpoints/blip_telugu/best/` and exports ONNX for faster CPU inference.
 
 ---
 
-## What Was Fixed in the March 2025 Overhaul
+## Cloud Training (Better Quality, Free)
 
-| Issue | Status |
-|-------|--------|
-| `ai4bharat/IndicCOCO` unavailable | ✅ Replaced with `Hardik15/telugu-image-captions` |
-| Full MS-COCO (18 GB, 80 classes) | ✅ Removed — campus-only 18 classes now |
-| VizWiz noisy blind-user photos | ✅ Removed |
-| `DATA_DIR_REF` crash bug in train_detector.py | ✅ Fixed |
-| Deprecated `torch.cuda.amp.autocast` | ✅ Fixed → `torch.amp.autocast` |
-| OCR required manual 'R' key press | ✅ Auto-triggers on sign/board/notice detection |
-| Danger zone too wide (35%×50%) | ✅ Tightened to 28%×40% |
-| Stairs/doors not prioritised | ✅ HIGH_PRIORITY_OBJECTS → immediate TTS interrupt |
+If you want full float16 training (better quality, needs 12+ GB VRAM):
+
+| Platform | VRAM | Cost | Command |
+|---|---|---|---|
+| Google Colab T4 | 15 GB | Free | `python training/train_captioner.py --no-4bit --batch-size 4` |
+| Kaggle P100 | 16 GB | Free | Same |
+| RunPod RTX 3090 | 24 GB | ~$0.4/hr | Same |

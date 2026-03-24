@@ -69,3 +69,106 @@ Three critical problems were identified:
 - `tests/` — All unit tests pass without changes
 - `data/augmentations.py` — Compatible with new dataset loader
 - `training/export_models.py` — Still valid for ONNX export
+
+---
+
+## Telugu Caption Dataset Investigation — March 2026
+
+### Problem
+
+`Hardik15/telugu-image-captions` (the dataset added during the March 2025 overhaul) was confirmed **deleted / 404** on HuggingFace as of March 2026. This means `python data/download_datasets.py --dataset telugu` will fail.
+
+### All Candidates Checked (Live Browser Verification)
+
+| Dataset | Source | Native Telugu? | Status | Verdict |
+|---------|--------|---------------|--------|---------|
+| `Hardik15/telugu-image-captions` | HuggingFace | Unknown | ❌ **404 Deleted** | Original dataset — gone |
+| `FutureBeeAI/telugu-image-captions` | HuggingFace | Yes | ❌ **404 Deleted** | Removed |
+| `Telugu-LLM-Labs/Telugu-Image-Captions` | HuggingFace | Unknown | ❌ **404 Private** | Not accessible |
+| `ai4bharat/IndicCOCO` | HuggingFace | Yes | ❌ **404 Deleted** | Confirmed gone again |
+| `Telugu-LLM-Labs/Indic-Multimodal-Instructions` | HuggingFace | Mixed | ❌ **404** | Not accessible |
+| `gksriharsha/chitralekha` | HuggingFace | No | ❌ **Wrong type** | Telugu OCR dataset — not scene captions |
+| `ai4bharat/sangraha` | HuggingFace | No | ❌ **No images** | Text-only LLM dataset |
+| `visheratin/laion-coco-nllb` | HuggingFace | No (NLLB translated) | ✅ Live | 893K pairs but machine-translated, not native |
+| `wikimedia/wit_base` | HuggingFace | Mixed | ✅ Live | Wikipedia images, limited Telugu captions |
+| `dinhanhx/crossmodal-3600` | HuggingFace | Yes | ✅ Live | Only 3,600 images — too small for fine-tuning |
+| `FutureBeeAI` (website) | futurebeeai.com | **Yes — Native** | ✅ Live | **Paid / commercial** — 25,000+ pairs, 100+ native speakers |
+
+### Key Finding
+
+> **There is currently NO free, publicly available, native Telugu image caption dataset on HuggingFace, GitHub, or Kaggle.**
+
+All previously referenced datasets have been deleted or are private. Machine-translated Telugu datasets exist but do not produce natural-sounding output for a blind navigation assistant.
+
+### Recommended Path Forward (3 Options)
+
+#### Option A — FutureBeeAI Commercial Dataset *(Best quality, paid)*
+- **URL:** https://www.futurebeeai.com/dataset/multi-modal-dataset/telugu-image-caption-dataset
+- 25,000+ images with native Telugu captions written by 100+ native speakers
+- Directly suitable for BLIP fine-tuning
+- Requires contacting them for pricing / access
+- **Best choice if budget is available**
+
+#### Option B — Collect Your Own Campus Telugu Captions *(Best for this project, free)*
+- Take 500–1,000 photos on your actual college campus (doors, stairs, corridors, people, chairs, signs)
+- Have native Telugu speakers write one or two caption sentences per image
+- Use Label Studio (free tool) to organise: https://labelstud.io
+- Even 500 real campus images with Telugu descriptions will teach BLIP exactly the right vocabulary and environment
+- **Best choice for campus-specific accuracy** — no existing dataset covers this scenario
+- Output: place results in `data/telugu_captions/` in the existing `train.json` / `val.json` format
+
+#### Option C — AI4Bharat Website *(Check directly)*
+- AI4Bharat may host IndicCOCO or a replacement outside HuggingFace
+- Check directly: https://ai4bharat.iitm.ac.in/
+- If available, it would be the closest academic-quality free option
+
+### Resolution
+
+**Migrated from standard BLIP to mBLIP (March 2026)** — see section below.
+
+---
+
+## mBLIP Migration — March 2026
+
+### Why mBLIP?
+
+All Telugu image-caption datasets on HuggingFace confirmed deleted/unavailable (see previous section).
+Solution: switched to `Gregor/mblip-mt0-xl` — a BLIP-2 model trained on 96 languages **including Telugu natively**.
+mBLIP can describe campus scenes in Telugu **zero-shot** — no Telugu dataset required.
+Only a small human-collected campus dataset (300–500 photos) is needed for LoRA domain adaptation.
+
+### Hardware Configuration
+
+Project configured for: **RTX 3050 4GB VRAM**
+- `MBLIP_USE_4BIT = True` (4-bit NF4 quantization via bitsandbytes)
+- `MBLIP_TRAIN_BATCH_SIZE = 1`, `MBLIP_GRAD_ACCUM_STEPS = 8`
+- For cloud (Colab/Kaggle): use `--no-4bit --batch-size 4`
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `config.py` | Complete rewrite — mBLIP settings, LoRA params, 4-bit flag, MBLIP_PROMPT |
+| `data/download_datasets.py` | Replaced HF Telugu download with campus dataset folder setup utility |
+| `data/dataset_loader.py` | Replaced `TeluguCaptionDataset` with `CampusCaptionDataset` (Blip2Processor) |
+| `training/train_captioner.py` | Complete rewrite — mBLIP + LoRA fine-tuning (saves adapter only, ~100 MB) |
+| `training/evaluate.py` | Updated for Blip2Processor, MBLIP_PROMPT, LoRA adapter auto-detection |
+| `src/caption_module.py` | Swapped BlipProcessor/BlipForConditionalGeneration for Blip2 equivalents + LoRA loading |
+| `requirements.txt` | Added `peft>=0.10.0`, `bitsandbytes>=0.43.0` |
+| `README.md` | Full rewrite — mBLIP architecture table, updated dataset table + project structure |
+| `TRAINING_GUIDE.md` | Full rewrite — mBLIP LoRA training guide, cloud training tips |
+| `NEXT_STEPS_DATASET_UPGRADE.md` | Updated to mBLIP action plan |
+| `DATASET_CREATION_GUIDE.md` | **NEW** — Complete guide for creating human campus caption dataset |
+| `data/campus_captions/train.json` | **NEW** — Sample JSON (replace with your data) |
+| `data/campus_captions/val.json` | **NEW** — Sample JSON (replace with your data) |
+
+### Files NOT Changed
+
+- `main.py` — No changes needed; mBLIP used inside `SceneCaptioner` only
+- `src/vision_module.py` — YOLO pipeline unchanged
+- `src/audio_module.py` — TTS unchanged
+- `src/ocr_module.py` — OCR unchanged
+- `training/train_detector.py` — YOLO training unchanged
+- `data/augmentations.py` — Image transforms work with any model
+- `demo/` — Untouched (separate standalone system)
+- `tests/` — Tests relate to audio/spatial modules; unchanged

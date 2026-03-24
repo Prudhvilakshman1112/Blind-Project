@@ -11,15 +11,17 @@ Edit this file before training or running the application.
     Phase 1 — Detects 18 campus-relevant objects in real time
                (YOLO11s fine-tuned on Roboflow indoor datasets)
     Phase 2 — Describes the scene natively in TELUGU language
-               (BLIP fine-tuned on HuggingFace Telugu captions)
+               (mBLIP — multilingual BLIP-2 supporting 96 languages
+                including Telugu natively; fine-tuned on human
+                campus caption dataset)
     Output  — Telugu voice via Microsoft Neural TTS (edge-tts)
                or offline pyttsx3 fallback
 
-  Dataset strategy (2025):
+  Dataset strategy (March 2026):
     YOLO  → Roboflow campus-specific datasets (door/stairs/pole …)
-    BLIP  → Hardik15/telugu-image-captions  (HuggingFace, ~25K pairs)
-    NO full COCO, NO VizWiz, NO IndicCOCO (all removed — too large
-    or unavailable; irrelevant objects hurt campus accuracy)
+    mBLIP → Human-collected campus caption dataset (your own photos
+             + Telugu captions — see DATASET_CREATION_GUIDE.md)
+    NO HuggingFace Telugu datasets — all confirmed deleted/unavailable
 ═══════════════════════════════════════════════════════════════
 """
 
@@ -33,8 +35,9 @@ from pathlib import Path
 ROOT_DIR        = Path(__file__).parent.resolve()
 DATA_DIR        = ROOT_DIR / "data"
 
-# Caption dataset for BLIP fine-tuning (Telugu)
-CAMPUS_CAPTION_DIR  = DATA_DIR / "telugu_captions"   # HuggingFace: Hardik15/telugu-image-captions
+# Caption dataset for mBLIP fine-tuning (human campus photos + Telugu captions)
+# See DATASET_CREATION_GUIDE.md for how to create this dataset
+CAMPUS_CAPTION_DIR  = DATA_DIR / "campus_captions"   # Your own campus images + Telugu captions
 
 # Object detection dataset for YOLO training (campus-specific, Roboflow)
 INDOOR_DIR          = DATA_DIR / "indoor_campus"      # Manual download — see data/MANUAL_DOWNLOADS.md
@@ -119,19 +122,47 @@ DISTANCE_NEAR_THRESHOLD   = 0.15   # bbox area > 15% → "very close"
 DISTANCE_MEDIUM_THRESHOLD = 0.03   # bbox area 3–15% → "nearby"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BLIP CAPTIONING MODEL
+# mBLIP CAPTIONING MODEL
 # ─────────────────────────────────────────────────────────────────────────────
-BLIP_PRETRAINED_NAME   = "Salesforce/blip-image-captioning-base"
-BLIP_FINETUNED_PATH    = str(CHECKPOINTS_DIR / "blip_telugu")
-BLIP_USE_FINETUNED     = False     # Set True after Telugu fine-tuning
+# mBLIP = multilingual BLIP-2 supporting 96 languages including Telugu natively.
+# Model: Gregor/mblip-mt0-xl on HuggingFace (~5 GB download on first run)
+# Paper: https://aclanthology.org/2023.emnlp-main.648/
+#
+# VRAM requirements:
+#   MBLIP_USE_4BIT = True  → ~3.5 GB VRAM  (RTX 3050 4GB) ← DEFAULT for this project
+#   MBLIP_USE_4BIT = False → ~8–10 GB VRAM (Colab T4 / Kaggle P100 / RTX 3080+)
+#
+# Fine-tuning uses LoRA — only trains a small adapter (~100 MB).
+# The base mBLIP weights are FROZEN (not changed during training).
+MBLIP_PRETRAINED_NAME  = "Gregor/mblip-mt0-xl"
+MBLIP_FINETUNED_PATH   = str(CHECKPOINTS_DIR / "mblip_campus")
+MBLIP_USE_FINETUNED    = False     # Set True after campus fine-tuning completes
 
-BLIP_MAX_NEW_TOKENS    = 80        # Slightly more for Telugu sentences
-BLIP_NUM_BEAMS         = 4
-BLIP_CAPTION_INTERVAL  = 4.0      # Seconds between full scene captions
+# ── 4-bit Quantization (for 4 GB VRAM GPUs like RTX 3050) ───────────────────
+# True  = uses bitsandbytes int8/4-bit → fits 4 GB VRAM, tiny quality loss
+# False = uses float16 → better quality, needs 8–12 GB VRAM (use on Colab/cloud)
+MBLIP_USE_4BIT         = True      # Recommended: True for RTX 3050 4GB
 
-# ONNX / OpenVINO paths (populated after export)
-BLIP_ONNX_PATH        = str(EXPORTED_DIR / "blip_vision_encoder.onnx")
-OPENVINO_MODEL_DIR    = str(EXPORTED_DIR / "blip_openvino")
+# ── Caption Generation ───────────────────────────────────────────────────────
+# Prompt sent to mBLIP. The model uses this to know to respond in Telugu.
+MBLIP_PROMPT           = "Describe this campus scene in Telugu:"
+MBLIP_LANGUAGE         = "Telugu"  # Informational / for logging
+MBLIP_MAX_NEW_TOKENS   = 80        # Telugu sentences may be slightly longer
+MBLIP_NUM_BEAMS        = 3         # Reduced from 4 to save VRAM on 4 GB GPU
+MBLIP_CAPTION_INTERVAL = 4.0       # Seconds between full scene captions
+
+# ── LoRA Fine-tuning Hyperparams ─────────────────────────────────────────────
+# LoRA only updates a small number of parameters — fits 4 GB VRAM for training.
+MBLIP_LORA_RANK        = 16        # LoRA rank (higher = more params, better quality)
+MBLIP_LORA_ALPHA       = 32        # LoRA scaling factor (usually 2× rank)
+MBLIP_LORA_DROPOUT     = 0.05      # LoRA dropout
+
+# ── Backward-compatibility alias (used in a few old references) ──────────────
+BLIP_CAPTION_INTERVAL  = MBLIP_CAPTION_INTERVAL
+
+# ONNX / OpenVINO paths (populated after export — optional)
+MBLIP_ONNX_PATH        = str(EXPORTED_DIR / "mblip_vision_encoder.onnx")
+OPENVINO_MODEL_DIR     = str(EXPORTED_DIR / "mblip_openvino")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OCR
@@ -153,31 +184,42 @@ TTS_VOLUME        = 1.0
 TTS_VOICE_GENDER  = "female"
 EDGE_TTS_VOICE    = "te-IN-ShrutiNeural"  # Telugu female neural voice (Microsoft)
 
-# Telugu output flag — all spoken text translated to Telugu before TTS
-TELUGU_MODE       = True    # Set False to revert to English output
+# Telugu output flag — mBLIP outputs Telugu natively (no translation needed)
+# Set False only if you want to revert to English output (testing only)
+TELUGU_MODE       = True
 
 # Priority levels for TTS queue
 TTS_PRIORITY_HIGH = 0       # Danger alerts — interrupt immediately
 TTS_PRIORITY_LOW  = 1       # Scene descriptions — plays in order
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TRAINING — BLIP CAPTIONER
+# TRAINING — mBLIP CAPTIONER (LoRA fine-tuning)
 # ─────────────────────────────────────────────────────────────────────────────
-BLIP_TRAIN_EPOCHS        = 8
-BLIP_TRAIN_BATCH_SIZE    = 4         # Reduce to 2 if OOM on 4 GB VRAM
-BLIP_LEARNING_RATE       = 5e-5
-BLIP_WEIGHT_DECAY        = 0.01
-BLIP_WARMUP_STEPS        = 300
-BLIP_GRAD_ACCUM_STEPS    = 4         # Effective batch = 4 × 4 = 16
-BLIP_SAVE_STEPS          = 200
-BLIP_EVAL_STEPS          = 200
+# NOTE: Training only fine-tunes the LoRA adapter (not the full mBLIP model).
+#       Only 1–3 epochs are usually needed since mBLIP already knows Telugu.
+#
+# For RTX 3050 4 GB:
+#   MBLIP_TRAIN_BATCH_SIZE = 1
+#   MBLIP_GRAD_ACCUM_STEPS = 8  → effective batch = 8
+#
+# For Colab T4 / Kaggle (15–16 GB VRAM):
+#   MBLIP_TRAIN_BATCH_SIZE = 4
+#   MBLIP_GRAD_ACCUM_STEPS = 4  → effective batch = 16
+MBLIP_TRAIN_EPOCHS        = 3          # 3 epochs is usually enough for LoRA
+MBLIP_TRAIN_BATCH_SIZE    = 1          # RTX 3050 4 GB: must be 1
+MBLIP_LEARNING_RATE       = 2e-4       # LoRA standard learning rate
+MBLIP_WEIGHT_DECAY        = 0.01
+MBLIP_WARMUP_STEPS        = 50
+MBLIP_GRAD_ACCUM_STEPS    = 8          # Effective batch = 1 × 8 = 8
+MBLIP_SAVE_STEPS          = 50
+MBLIP_EVAL_STEPS          = 50
 
-# Training sample limits (prevents OOM on small GPUs)
-BLIP_MAX_TRAIN_SAMPLES   = 20000     # Use up to 20K Telugu pairs (full dataset ~25K)
-BLIP_MAX_VAL_SAMPLES     = 2000
+# Training sample limits
+MBLIP_MAX_TRAIN_SAMPLES   = None       # Use all campus images (your dataset is small)
+MBLIP_MAX_VAL_SAMPLES     = None
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TRAINING — YOLO DETECTOR
+# TRAINING — YOLO DETECTOR  (unchanged from previous version)
 # ─────────────────────────────────────────────────────────────────────────────
 YOLO_TRAIN_EPOCHS        = 80
 YOLO_TRAIN_BATCH_SIZE    = 16
