@@ -5,7 +5,9 @@ Follow the steps below, then place each dataset in the correct folder.
 
 > **Note:** The project no longer uses full MS-COCO, VizWiz, or AI4Bharat IndicCOCO.
 > All YOLO training now uses campus-specific Roboflow datasets only (fast + accurate).
-> Telugu captions are auto-downloaded: `python data/download_datasets.py --dataset telugu`
+> For Telugu captions (mBLIP fine-tuning), create your own campus dataset:
+> `python data/download_datasets.py --dataset campus-setup`
+> Then follow **DATASET_CREATION_GUIDE.md** in the project root.
 
 ---
 
@@ -106,10 +108,10 @@ and trains on the combined campus-specific detection classes.
 
 ```
 data/
-├── telugu_captions/     ← Auto-downloaded (python data/download_datasets.py --dataset telugu)
-│   ├── train.json
-│   ├── val.json
-│   └── images/
+├── campus_captions/     ← Your own campus photos + Telugu captions
+│   ├── train.json           (replace sample entries with your data)
+│   ├── val.json             (replace sample entries with your data)
+│   └── images/              (place your .jpg campus photos here)
 └── indoor_campus/       ← MANUAL DOWNLOAD (this guide)
     ├── scin_indoor/     ← Roboflow SCIN  (door, stairs)
     ├── akhash_indoor/   ← Roboflow Akhash (door, person, elevator, stair sign)

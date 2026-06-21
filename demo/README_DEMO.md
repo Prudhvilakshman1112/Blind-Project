@@ -114,8 +114,8 @@ If you're happy with the output:
 1. ✅ Proceed with full training (see `TRAINING_GUIDE.md` in the main project)
 2. After training, set in `config.py`:
    ```python
-   BLIP_USE_FINETUNED = True
-   YOLO_USE_CUSTOM    = True
+   MBLIP_USE_FINETUNED = True   # Use campus LoRA adapter (checkpoints/mblip_campus/best/)
+   YOLO_USE_CUSTOM     = True   # Use campus YOLO weights (checkpoints/yolo11_campus.pt)
    ```
 3. Run the production app: `python main.py`
 
