@@ -42,6 +42,14 @@ CAMERA_FPS        = 30
 FRAME_BUFFER_SIZE = 5
 
 # ─────────────────────────────────────────────────────────────────────────────
+# API CONFIGURATION (Mobile Delivery)
+# ─────────────────────────────────────────────────────────────────────────────
+API_HOST          = "0.0.0.0"
+API_PORT          = 8001
+API_CORS_ORIGINS  = ["*"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # YOLO — Uses default pre-trained weights (no fine-tuning needed)
 # ─────────────────────────────────────────────────────────────────────────────
 YOLO_MODEL_NAME      = "yolo11n.pt"   # Downloaded automatically on first run
@@ -61,17 +69,17 @@ DISTANCE_MEDIUM_THRESHOLD = 0.05
 # CAPTIONING — Gemini Flash settings
 # ─────────────────────────────────────────────────────────────────────────────
 CAPTION_INTERVAL  = 4.0    # Seconds between Gemini API calls
-CAPTION_MAX_TOKENS = 150   # Keep responses concise for TTS
+CAPTION_MAX_TOKENS = 50    # Keep responses concise for TTS
+SCENE_CHANGE_THRESHOLD = 15.0 # Skip caption if avg pixel diff is below this
 
 # Prompt sent to Gemini with every frame (tuned for blind navigation)
 GEMINI_PROMPT = (
     "You are an AI assistant helping a blind person navigate their environment. "
-    "Describe what you see in this image in ONE clear, concise sentence. "
+    "Describe what you see in this image in ONE clear, concise sentence in TELUGU. "
     "Focus on: the type of environment (indoor/outdoor), key objects, "
     "and anything that could be an obstacle or point of interest. "
-    "Be specific and natural. Example: "
-    "'You are in a kitchen; there is a dining table ahead and a refrigerator to the right.' "
-    "Do NOT say 'The image shows' or 'I can see'. Just describe directly."
+    "Be specific and natural. "
+    "Do NOT say 'The image shows' or 'I can see'. Just describe directly in Telugu."
 )
 
 # ─────────────────────────────────────────────────────────────────────────────

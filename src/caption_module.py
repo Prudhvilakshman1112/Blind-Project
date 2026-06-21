@@ -38,6 +38,7 @@ from config import (
     MBLIP_USE_FINETUNED, MBLIP_USE_4BIT,
     MBLIP_PROMPT, MBLIP_MAX_NEW_TOKENS, MBLIP_NUM_BEAMS,
     MBLIP_CAPTION_INTERVAL, HIGH_PRIORITY_OBJECTS,
+    SCENE_CHANGE_THRESHOLD,
 )
 from src.vision_module import DetectionList
 
@@ -130,6 +131,7 @@ class SceneCaptioner:
         self.model.eval()
         self._last_caption_time = 0.0
         self._last_caption      = ""
+        self._last_frame_gray   = None
         log.info("mBLIP captioner ready ✓")
 
     @torch.no_grad()
@@ -142,7 +144,24 @@ class SceneCaptioner:
         if now - self._last_caption_time < MBLIP_CAPTION_INTERVAL:
             return None
 
-        image  = Image.fromarray(cv2_to_pil(frame))
+        import cv2
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Technique 5: Scene change detection
+        if self._last_frame_gray is not None:
+            diff = cv2.absdiff(self._last_frame_gray, gray)
+            change = diff.mean()
+            if change < SCENE_CHANGE_THRESHOLD:
+                # Scene hasn't changed much, reuse last caption to save time
+                self._last_caption_time = now
+                return self._last_caption
+
+        self._last_frame_gray = gray
+
+        # Technique 3: Reduce image resolution
+        small_frame = cv2.resize(frame, (224, 224))
+        image  = Image.fromarray(cv2_to_pil(small_frame))
+        
         inputs = self.processor(
             images=image,
             text=MBLIP_PROMPT,
@@ -157,6 +176,7 @@ class SceneCaptioner:
                 **inputs,
                 max_new_tokens=MBLIP_MAX_NEW_TOKENS,
                 num_beams=MBLIP_NUM_BEAMS,
+                do_sample=False,
                 early_stopping=True,
             )
 

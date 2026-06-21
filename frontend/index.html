@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Blind-Project Mobile Navigation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #121212;
+            color: #ffffff;
+            font-family: 'Inter', Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            text-align: center;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        p {
+            font-size: 16px;
+            color: #b0b0b0;
+            margin: 0 20px 20px;
+        }
+        #video-container {
+            position: relative;
+            width: 90vw;
+            max-width: 400px;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #000;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        .status-bar {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            font-weight: 500;
+        }
+        button {
+            margin-top: 30px;
+            padding: 15px 40px;
+            font-size: 18px;
+            font-weight: bold;
+            color: #fff;
+            background: linear-gradient(135deg, #007bff, #0056b3);
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0, 123, 255, 0.4);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:active {
+            transform: scale(0.95);
+        }
+        button:disabled {
+            background: #555;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <h1>Campus Navigation</h1>
+    <p>Point your camera forward. Ensure your volume is up.</p>
+    
+    <div id="video-container">
+        <video id="webcam" autoplay playsinline muted></video>
+    </div>
+
+    <div class="status-bar" id="status">Ready to Start</div>
+    <button id="start-btn">Start Navigation</button>
+    <canvas id="canvas" style="display:none;"></canvas>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('start-btn');
+        const status = document.getElementById('status');
+
+        let isRunning = false;
+        let lastSpokenAlert = "";
+        let alertTimeout = null;
+
+        // Configuration
+        const API_URL = 'http://localhost:8000/analyze'; 
+        const FPS = 8; // ~125ms interval
+        const INTERVAL_MS = 1000 / FPS;
+
+        startBtn.addEventListener('click', async () => {
+            if (isRunning) {
+                stopApp();
+            } else {
+                await startApp();
+            }
+        });
+
+        async function startApp() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "environment" } 
+                });
+                video.srcObject = stream;
+                isRunning = true;
+                startBtn.innerText = "Stop Navigation";
+                status.innerText = "Connecting to server...";
+                
+                // Initialize speech synthesis (requires user gesture)
+                const utterance = new SpeechSynthesisUtterance("క్యాంపస్ నావిగేషన్ సిస్టమ్ ప్రారంభించబడింది");
+                utterance.lang = 'te-IN';
+                window.speechSynthesis.speak(utterance);
+
+                // Start capture loop once video plays
+                video.addEventListener('loadeddata', () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    captureLoop();
+                });
+            } catch (err) {
+                console.error("Camera error:", err);
+                status.innerText = "Camera access denied.";
+            }
+        }
+
+        function stopApp() {
+            isRunning = false;
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+            startBtn.innerText = "Start Navigation";
+            status.innerText = "Stopped";
+            window.speechSynthesis.cancel();
+        }
+
+        async function captureLoop() {
+            if (!isRunning) return;
+
+            const startTime = Date.now();
+            
+            // Draw video frame to canvas
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const base64Image = canvas.toDataURL('image/jpeg', 0.6);
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: base64Image })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    status.innerText = "Processing live stream...";
+                    handleResponse(data);
+                } else {
+                    status.innerText = "Server Error";
+                }
+            } catch (err) {
+                console.error("Fetch error:", err);
+                status.innerText = "Connection lost. Retrying...";
+            }
+
+            // Schedule next frame to target FPS
+            const elapsed = Date.now() - startTime;
+            const delay = Math.max(0, INTERVAL_MS - elapsed);
+            setTimeout(captureLoop, delay);
+        }
+
+        function handleResponse(data) {
+            // Priority 1: High priority alerts from YOLO
+            if (data.alerts && data.alerts.length > 0) {
+                const newAlert = data.alerts[0];
+                // Debounce the same alert for 3 seconds to avoid spam
+                if (newAlert !== lastSpokenAlert) {
+                    speak(newAlert, true);
+                    lastSpokenAlert = newAlert;
+                    if (alertTimeout) clearTimeout(alertTimeout);
+                    alertTimeout = setTimeout(() => { lastSpokenAlert = ""; }, 3000);
+                }
+                return; // Skip normal caption if alerting
+            }
+
+            // Priority 2: Scene captions
+            // Only speak caption if not currently speaking an alert
+            if (data.caption && data.caption.trim().length > 0 && data.caption !== "మార్గం స్పష్టంగా ఉంది. అడ్డంకులు లేవు.") {
+                // If we aren't already speaking
+                if (!window.speechSynthesis.speaking) {
+                    speak(data.caption, false);
+                }
+            }
+        }
+
+        function speak(text, isAlert) {
+            // If it's an alert, interrupt current speech
+            if (isAlert) {
+                window.speechSynthesis.cancel();
+            }
+
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'te-IN';
+            // Adjust properties for alerts
+            if (isAlert) {
+                utterance.rate = 1.2;
+                utterance.pitch = 1.1;
+            }
+            window.speechSynthesis.speak(utterance);
+        }
+    </script>
+</body>
+</html>

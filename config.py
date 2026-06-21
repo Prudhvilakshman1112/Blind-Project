@@ -70,6 +70,14 @@ CAMERA_FPS        = 30
 FRAME_BUFFER_SIZE = 5          # Max frames held in buffer
 
 # ─────────────────────────────────────────────────────────────────────────────
+# API CONFIGURATION (Mobile Delivery)
+# ─────────────────────────────────────────────────────────────────────────────
+API_HOST          = "0.0.0.0"
+API_PORT          = 8000
+API_CORS_ORIGINS  = ["*"]      # Allow all origins for the frontend app
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # YOLO OBJECT DETECTION
 # ─────────────────────────────────────────────────────────────────────────────
 # yolo11s — small model, good accuracy, suitable for 4–6 GB VRAM
@@ -145,11 +153,12 @@ MBLIP_USE_4BIT         = True      # Recommended: True for RTX 3050 4GB
 
 # ── Caption Generation ───────────────────────────────────────────────────────
 # Prompt sent to mBLIP. The model uses this to know to respond in Telugu.
-MBLIP_PROMPT           = "Describe this campus scene in Telugu:"
+MBLIP_PROMPT           = "క్లుప్తంగా వివరించు:"
 MBLIP_LANGUAGE         = "Telugu"  # Informational / for logging
-MBLIP_MAX_NEW_TOKENS   = 80        # Telugu sentences may be slightly longer
-MBLIP_NUM_BEAMS        = 3         # Reduced from 4 to save VRAM on 4 GB GPU
+MBLIP_MAX_NEW_TOKENS   = 25        # Navigation captions don't need to be long
+MBLIP_NUM_BEAMS        = 1         # Greedy search for fastest generation
 MBLIP_CAPTION_INTERVAL = 4.0       # Seconds between full scene captions
+SCENE_CHANGE_THRESHOLD = 15.0      # Skip mBLIP if avg pixel diff is below this
 
 # ── LoRA Fine-tuning Hyperparams ─────────────────────────────────────────────
 # LoRA only updates a small number of parameters — fits 4 GB VRAM for training.

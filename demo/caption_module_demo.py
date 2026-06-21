@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from config_demo import (
     GEMINI_API_KEY, GEMINI_MODEL, CAPTION_INTERVAL,
-    CAPTION_MAX_TOKENS, GEMINI_PROMPT,
+    CAPTION_MAX_TOKENS, GEMINI_PROMPT, SCENE_CHANGE_THRESHOLD
 )
 
 log = logging.getLogger(__name__)
@@ -66,6 +66,7 @@ class GeminiCaptioner:
 
         self._last_caption_time = 0.0
         self._last_caption      = ""
+        self._last_frame_gray   = None
 
     def caption(self, frame: np.ndarray) -> Optional[str]:
         """
@@ -76,8 +77,19 @@ class GeminiCaptioner:
         if now - self._last_caption_time < CAPTION_INTERVAL:
             return None  # Too soon — skip call
 
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if self._last_frame_gray is not None:
+            diff = cv2.absdiff(self._last_frame_gray, gray)
+            if diff.mean() < SCENE_CHANGE_THRESHOLD:
+                self._last_caption_time = now
+                return self._last_caption
+        
+        self._last_frame_gray = gray
+
         # Convert OpenCV BGR frame to PIL image → JPEG bytes
-        rgb    = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # Reduce image resolution for faster processing
+        small_frame = cv2.resize(frame, (224, 224))
+        rgb    = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(rgb)
         buffer  = io.BytesIO()
         pil_img.save(buffer, format="JPEG", quality=85)
@@ -132,7 +144,7 @@ def _article(word: str) -> str:
 class SpatialReasoningNLP:
     """
     Enriches the Gemini raw caption with YOLO spatial detections to produce
-    a complete, grammatically correct navigation sentence.
+    a complete, grammatically correct navigation sentence in Telugu.
 
     Identical logic to src/caption_module.py::SpatialReasoningNLP.
     """
@@ -154,8 +166,8 @@ class SpatialReasoningNLP:
         if danger_items:
             top = danger_items[0]
             parts.append(
-                f"Warning! {_article(top['label']).capitalize()} {top['label']} "
-                f"is {top['distance_word']}, {top['clock_pos']}."
+                f"జాగ్రత్త: {top['label']} "
+                f"{top['distance_word']}, {top['clock_pos']}."
             )
 
         # Up to 3 more notable detections
@@ -167,17 +179,18 @@ class SpatialReasoningNLP:
             if det["in_danger_zone"] or det["label"] in seen:
                 continue
             parts.append(
-                f"{_article(det['label']).capitalize()} {det['label']} "
-                f"is {det['distance_word']}, {det['clock_pos']}."
+                f"{det['label']} {det['distance_word']}, {det['clock_pos']}."
             )
             seen.add(det["label"])
             count += 1
 
-        return " ".join(parts) if parts else "The path ahead appears clear."
+        return " ".join(parts) if parts else "మార్గం స్పష్టంగా ఉంది. అడ్డంకులు లేవు."
 
     def build_danger_alert(self, detection: Dict) -> str:
-        return (
-            f"Caution! {_article(detection['label']).capitalize()} "
-            f"{detection['label']} is {detection['distance_word']}, "
-            f"{detection['clock_pos']}! Please be careful."
-        )
+        label = detection["label"]
+        dist  = detection["distance_word"]
+        pos   = detection["clock_pos"]
+
+        if detection.get("is_high_priority"):
+            return f"హెచ్చరిక! {label} {dist}, {pos}! జాగ్రత్తగా ఉండండి!"
+        return f"జాగ్రత్త! {label} {dist}, {pos}!"
